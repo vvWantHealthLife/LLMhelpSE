@@ -1,0 +1,25 @@
+{
+  "text_content": "LLM",
+  "font_family": "Kokonor",
+  "font_size": 36,
+  "font_bold": true,
+  "font_italic": true,
+  "text_color": {
+    "r": 255,
+    "g": 38,
+    "b": 0,
+    "a": 255
+  },
+  "text_opacity": 100,
+  "text_shadow": false,
+  "text_outline": false,
+  "outline_width": 2,
+  "watermark_image_path": "/Users/sunzhaowei/Desktop/pic/WechatIMG780.png",
+  "watermark_image_scale": 0.14,
+  "keep_aspect_ratio": true,
+  "watermark_image_width": 201,
+  "watermark_image_height": 134,
+  "watermark_image_opacity": 100,
+  "position": "上中",
+  "rotation": 0
+}
