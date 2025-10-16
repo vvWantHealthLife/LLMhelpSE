@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 旅行规划师 · 前端原型</title>
+    <style>
+        :root{
+            --bg:#0b1020;--panel:#121733;--muted:#1a2250;--text:#e7ebff;--sub:#9fb0ff;--accent:#6ea2ff;--ok:#69d48a;--warn:#ffd66e;--bad:#ff8b7b;
+            --br:16px
+        }
+        *{box-sizing:border-box}
+        html,body{height:100%}
+        body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial; background:linear-gradient(180deg,#0b1020,#0b1020 40%,#0f1430 100%); color:var(--text)}
+        header{position:sticky;top:0;z-index:10;background:rgba(11,16,32,.75);backdrop-filter:saturate(140%) blur(8px);border-bottom:1px solid #1c2550}
+        .container{max-width:1080px;margin:0 auto;padding:16px}
+        .brand{display:flex;gap:12px;align-items:center}
+        .logo{height:36px;width:36px;border-radius:10px;background:conic-gradient(from 220deg at 50% 50%,#7aa8ff,#9be7ff,#7aa8ff);box-shadow:0 0 24px rgba(126,191,255,.35)}
+        h1{font-size:18px;margin:0;letter-spacing:.4px}
+
+        /* Tabs */
+        .tabs{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+        .tab{padding:10px 14px;border-radius:999px;border:1px solid #2a366e;background:#121733;color:#cbd6ff;cursor:pointer}
+        .tab.active{background:linear-gradient(180deg,#202a62,#1a2250);border-color:#3a4aa0;color:#fff}
+
+        main{max-width:1080px;margin:16px auto;padding:0 16px 48px}
+        .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}
+        @media (max-width:900px){.grid{grid-template-columns:1fr}}
+
+        .card{background:var(--panel);border:1px solid #25306b;border-radius:var(--br);padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+        .card h2{margin:0 0 12px;font-size:18px;color:#fff}
+        .row{display:flex;gap:10px;flex-wrap:wrap}
+        label{display:block;font-size:12px;color:#a8b7ff;margin-bottom:6px}
+        input, textarea, select{width:100%;padding:12px 12px;border-radius:12px;border:1px solid #2a366e;background:#0e1430;color:#e7ebff;outline:none}
+        textarea{min-height:90px;resize:vertical}
+        .btn{padding:12px 14px;border-radius:12px;border:1px solid #3850aa;background:#1a2250;color:#e8f0ff;cursor:pointer}
+        .btn:hover{filter:brightness(1.1)}
+        .btn.primary{background:linear-gradient(180deg,#3153ce,#2a3ea8);border-color:#3f5fe2}
+        .btn.ghost{background:transparent;border-color:#33418a}
+        .btn.warn{background:#564410;border-color:#7c5f13}
+        .btn.ok{background:#1f5a3b;border-color:#2a8c57}
+        .badge{padding:4px 8px;border-radius:999px;border:1px solid #324192;background:#131a3b;color:#b8c8ff;font-size:12px}
+        .muted{color:#9fb0ff}
+        .hint{font-size:12px;color:#a6b5ff;opacity:.85}
+
+        .result{border:1px dashed #33418a;border-radius:12px;padding:12px}
+        .day{border-left:3px solid #3955d7;padding-left:12px;margin:8px 0}
+        .progress{height:10px;background:#0f1430;border:1px solid #2a366e;border-radius:999px;overflow:hidden}
+        .progress > div{height:100%;background:linear-gradient(90deg,#5ca9ff,#9be7ff)}
+
+        .list{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+        .item{display:flex;justify-content:space-between;align-items:center;padding:10px;border:1px solid #2a366e;border-radius:12px;background:#10173a}
+        .item small{color:#9fb0ff}
+
+        .footer-note{opacity:.8;font-size:12px;margin-top:10px}
+        .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#10173a;border:1px solid #2a366e}
+    </style>
+</head>
+<body>
+<header>
+    <div class="container">
+        <div class="brand">
+            <div class="logo"></div>
+            <div>
+                <h1>AI 旅行规划师 · 演示前端（纯静态，无后端）</h1>
+                <div class="hint">语音输入 · 行程生成 · 预算记录 · 账户/本地存储（模拟云同步）</div>
+            </div>
+        </div>
+        <div class="tabs" id="tabs">
+            <button class="tab active" data-tab="plan">智能行程规划</button>
+            <button class="tab" data-tab="budget">费用预算与管理</button>
+            <button class="tab" data-tab="account">用户管理与数据存储</button>
+        </div>
+    </div>
+</header>
+
+<main>
+    <div class="grid">
+        <!-- 左侧：核心功能区 -->
+        <section class="card" id="panel-plan">
+            <h2>1) 智能行程规划</h2>
+            <div class="row">
+                <div style="flex:1 1 240px">
+                    <label>自然语言需求（可语音）</label>
+                    <textarea id="nlpText" placeholder="例如：我想去日本，5天，预算1万元，喜欢美食和动漫，带孩子"></textarea>
+                    <div class="row" style="margin-top:8px">
+                        <button class="btn" id="micBtn">🎤 开始语音</button>
+                        <span class="hint" id="sttHint">您的浏览器需支持 Web Speech API（建议 Chrome/Edge）。</span>
+                    </div>
+                </div>
+            </div>
+            <div class="row" style="margin-top:12px">
+                <div style="flex:1 1 180px">
+                    <label>目的地</label>
+                    <input id="dest" placeholder="如：日本东京"/>
+                </div>
+                <div style="flex:1 1 160px">
+                    <label>出发日期</label>
+                    <input type="date" id="date" />
+                </div>
+                <div style="flex:1 1 140px">
+                    <label>天数</label>
+                    <input type="number" id="days" min="1" value="5" />
+                </div>
+                <div style="flex:1 1 160px">
+                    <label>预算（¥）</label>
+                    <input type="number" id="budget" min="0" step="100" placeholder="10000" />
+                </div>
+                <div style="flex:1 1 140px">
+                    <label>同行人数</label>
+                    <input type="number" id="people" min="1" value="2" />
+                </div>
+            </div>
+            <div class="row" style="margin-top:12px">
+                <div style="flex:1 1 100%">
+                    <label>旅行偏好（以逗号分隔）</label>
+                    <input id="prefs" placeholder="美食, 动漫, 亲子, 自然风光" />
+                </div>
+            </div>
+            <div class="row" style="margin-top:12px">
+                <button class="btn ghost" id="parseBtn">🔎 从自然语言中提取并填充</button>
+                <button class="btn primary" id="genBtn">✨ 生成行程（示例）</button>
+            </div>
+            <div style="margin-top:14px">
+                <div class="result" id="planResult"><span class="hint">生成的示例行程会显示在这里（前端演示，不调用后端）。</span></div>
+            </div>
+        </section>
+
+        <!-- 右侧：预算管理 -->
+        <section class="card" id="panel-budget" style="display:none">
+            <h2>2) 费用预算与管理</h2>
+            <div class="row">
+                <div style="flex:1 1 160px">
+                    <label>项目</label>
+                    <input id="expName" placeholder="如：机场到市区打车"/>
+                </div>
+                <div style="flex:1 1 120px">
+                    <label>金额（¥）</label>
+                    <input type="number" id="expAmt" min="0" step="1"/>
+                </div>
+                <div style="flex:1 1 160px">
+                    <label>类别</label>
+                    <select id="expCat">
+                        <option>交通</option>
+                        <option>住宿</option>
+                        <option>餐饮</option>
+                        <option>门票/活动</option>
+                        <option>购物</option>
+                        <option>其他</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row" style="margin-top:10px">
+                <button class="btn" id="addExp">➕ 添加</button>
+                <button class="btn warn" id="clearExp">🗑️ 清空</button>
+            </div>
+            <div style="margin-top:12px">
+                <div class="row" style="align-items:center;justify-content:space-between">
+                    <div class="pill"><small>预算总额</small><strong id="budgetTotal" style="margin-left:6px">0</strong></div>
+                    <div class="pill"><small>已花费</small><strong id="spentTotal" style="margin-left:6px">0</strong></div>
+                    <div class="pill"><small>剩余</small><strong id="remainTotal" style="margin-left:6px">0</strong></div>
+                </div>
+                <div class="progress" style="margin-top:10px"><div id="spentBar" style="width:0%"></div></div>
+            </div>
+            <div class="list" id="expList"></div>
+            <div class="footer-note">注：这里的预算上限与「智能行程规划」中的预算联动（同一浏览会话）。</div>
+        </section>
+
+        <!-- 右侧：账户/数据存储 -->
+        <section class="card" id="panel-account" style="display:none">
+            <h2>3) 用户管理与数据存储（前端演示）</h2>
+            <div class="hint" style="margin-bottom:8px">此处仅本地存储模拟：注册/登录信息与行程、预算会保存在浏览器的 localStorage。后续你可替换成真实后端与云端同步。</div>
+            <div class="row">
+                <div style="flex:1 1 220px">
+                    <label>邮箱</label>
+                    <input id="email" placeholder="you@example.com"/>
+                </div>
+                <div style="flex:1 1 180px">
+                    <label>密码</label>
+                    <input type="password" id="password"/>
+                </div>
+            </div>
+            <div class="row" style="margin-top:10px">
+                <button class="btn" id="registerBtn">📝 注册</button>
+                <button class="btn" id="loginBtn">🔐 登录</button>
+                <button class="btn" id="logoutBtn">🚪 退出</button>
+                <span class="badge" id="authState">未登录</span>
+            </div>
+            <hr style="border:none;border-top:1px solid #2a366e;margin:14px 0"/>
+            <div class="row">
+                <button class="btn ok" id="savePlanBtn">💾 保存当前行程+预算</button>
+                <button class="btn" id="loadPlansBtn">📂 载入我的计划</button>
+            </div>
+            <div class="list" id="plansList" style="margin-top:10px"></div>
+        </section>
+
+        <!-- 右侧信息/帮助 -->
+        <aside class="card" id="sideInfo">
+            <h2>预览 / 帮助</h2>
+            <p class="muted">这是一个单文件的前端原型，展示页面结构与交互逻辑。</p>
+            <ul>
+                <li>语音：使用 <code>Web Speech API</code>（仅演示语音转文字）。</li>
+                <li>行程：前端示例生成（非真实 AI 规划）。</li>
+                <li>预算：本地列表 + 进度条。</li>
+                <li>账户：localStorage 模拟注册/登录与计划保存。</li>
+            </ul>
+            <p class="footer-note">后端接口与「云端同步」可在将来接入，前端已预留数据结构与事件入口。</p>
+        </aside>
+    </div>
+</main>
+
+<script>
+    // =============== Tabs ===============
+    const tabs = document.getElementById('tabs');
+    const panels = {
+        plan: document.getElementById('panel-plan'),
+        budget: document.getElementById('panel-budget'),
+        account: document.getElementById('panel-account')
+    };
+    tabs.addEventListener('click', (e)=>{
+        const btn = e.target.closest('.tab');
+        if(!btn) return;
+        [...tabs.children].forEach(el=>el.classList.remove('active'));
+        btn.classList.add('active');
+        const key = btn.dataset.tab;
+        Object.entries(panels).forEach(([k,el])=>{ el.style.display = (k===key? 'block':'none'); });
+    });
+
+    // =============== DOM Refs ===============
+    const el = (id)=>document.getElementById(id);
+    const nlpText = el('nlpText');
+    const micBtn = el('micBtn');
+    const sttHint = el('sttHint');
+
+    const dest = el('dest');
+    const date = el('date');
+    const days = el('days');
+    const budget = el('budget');
+    const people = el('people');
+    const prefs = el('prefs');
+
+    const parseBtn = el('parseBtn');
+    const genBtn = el('genBtn');
+    const planResult = el('planResult');
+
+    const expName = el('expName');
+    const expAmt = el('expAmt');
+    const expCat = el('expCat');
+    const addExp = el('addExp');
+    const clearExp = el('clearExp');
+    const expList = el('expList');
+
+    const budgetTotal = el('budgetTotal');
+    const spentTotal = el('spentTotal');
+    const remainTotal = el('remainTotal');
+    const spentBar = el('spentBar');
+
+    const email = el('email');
+    const password = el('password');
+    const registerBtn = el('registerBtn');
+    const loginBtn = el('loginBtn');
+    const logoutBtn = el('logoutBtn');
+    const authState = el('authState');
+    const savePlanBtn = el('savePlanBtn');
+    const loadPlansBtn = el('loadPlansBtn');
+    const plansList = el('plansList');
+
+    // =============== Simple Store (in-memory + localStorage) ===============
+    const Store = {
+        session:null, // {email}
+        expenses:[],  // {id, name, amt, cat}
+        plan:{},      // saved current plan inputs
+    };
+
+    function setSession(user){ Store.session = user; updateAuthState(); }
+    function updateAuthState(){
+        authState.textContent = Store.session? `已登录：${Store.session.email}` : '未登录';
+    }
+
+    function setBudgetFromInput(){
+        const val = Number(budget.value||0);
+        budgetTotal.textContent = val.toFixed(0);
+        updateSpent();
+    }
+    budget.addEventListener('input', setBudgetFromInput);
+
+    function updateSpent(){
+        const total = Number(budget.value||0);
+        const spent = Store.expenses.reduce((s,e)=>s + (Number(e.amt)||0), 0);
+        spentTotal.textContent = spent.toFixed(0);
+        const remain = Math.max(0, total - spent);
+        remainTotal.textContent = remain.toFixed(0);
+        const pct = total>0? Math.min(100, Math.round(spent*100/total)) : 0;
+        spentBar.style.width = pct + '%';
+        spentBar.style.background = spent>total? 'linear-gradient(90deg,#ff8b7b,#ffd66e)' : 'linear-gradient(90deg,#5ca9ff,#9be7ff)';
+    }
+
+    function renderExpenses(){
+        expList.innerHTML = '';
+        Store.expenses.forEach(e=>{
+            const div = document.createElement('div');
+            div.className = 'item';
+            div.innerHTML = `
+          <div>
+            <strong>${e.name||'未命名'}</strong>
+            <div><small>${e.cat}</small></div>
+          </div>
+          <div>
+            <strong>¥${Number(e.amt||0).toFixed(0)}</strong>
+            <button class="btn" style="margin-left:10px" data-del="${e.id}">删除</button>
+          </div>`;
+            expList.appendChild(div);
+        });
+    }
+
+    expList.addEventListener('click', (e)=>{
+        const id = e.target.getAttribute('data-del');
+        if(!id) return;
+        Store.expenses = Store.expenses.filter(x=>String(x.id)!==String(id));
+        renderExpenses();
+        updateSpent();
+        saveDraftToLocal();
+    });
+
+    addExp.addEventListener('click', ()=>{
+        const name = (expName.value||'').trim();
+        const amt = Number(expAmt.value||0);
+        if(!amt){ alert('请输入金额'); return; }
+        const cat = expCat.value||'其他';
+        Store.expenses.push({id:Date.now(), name, amt, cat});
+        expName.value = ''; expAmt.value = '';
+        renderExpenses(); updateSpent(); saveDraftToLocal();
+    });
+
+    clearExp.addEventListener('click', ()=>{
+        if(confirm('清空所有费用记录？')){
+            Store.expenses = []; renderExpenses(); updateSpent(); saveDraftToLocal();
+        }
+    });
+
+    // =============== Speech to Text (Web Speech API) ===============
+    let recognition = null, listening = false;
+    function initSTT(){
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if(!SR){ sttHint.textContent = '当前浏览器不支持语音识别，建议使用 Chrome 或 Edge。'; return; }
+        recognition = new SR();
+        recognition.lang = 'zh-CN';
+        recognition.interimResults = true;
+        recognition.continuous = true;
+
+        recognition.onresult = (event)=>{
+            let final = '';
+            for(let i=event.resultIndex;i<event.results.length;i++){
+                const r = event.results[i];
+                if(r.isFinal){ final += r[0].transcript; }
+            }
+            if(final){ nlpText.value += (nlpText.value? ' ' : '') + final; }
+        };
+        recognition.onerror = (e)=>{
+            console.warn('Speech error', e);
+            sttHint.textContent = '语音出错：' + (e.error||'未知');
+            micBtn.textContent = '🎤 开始语音'; listening=false;
+        };
+        recognition.onend = ()=>{ micBtn.textContent = '🎤 开始语音'; listening=false; };
+    }
+    initSTT();
+
+    micBtn.addEventListener('click', ()=>{
+        if(!recognition){ alert('当前浏览器不支持语音识别。'); return; }
+        if(!listening){ recognition.start(); listening=true; micBtn.textContent='⏹️ 停止语音'; sttHint.textContent='正在听… 说完点“停止语音”'; }
+        else { recognition.stop(); }
+    });
+
+    // =============== Simple NLP (非常粗略，仅示例) ===============
+    function parseFromText(txt){
+        const out = { dest:null, days:null, budget:null, people:null, prefs:[] };
+        if(!txt) return out;
+        // 目的地：匹配“去XX/到XX/目的地是XX”
+        const mCity = txt.match(/[去到]([\u4e00-\u9fa5A-Za-z\s]{2,12})[，,。]|目的地[是为]?([\u4e00-\u9fa5A-Za-z\s]{2,12})/);
+        if(mCity){ out.dest = (mCity[1]||mCity[2]||'').trim(); }
+        // 天数：匹配“X天”
+        const mDays = txt.match(/(\d{1,2})\s*天/);
+        if(mDays){ out.days = Number(mDays[1]); }
+        // 预算：匹配“预算X万/元”
+        const mBudgetWan = txt.match(/预算\s*(\d+(?:\.\d+)?)\s*万/);
+        const mBudgetYuan = txt.match(/预算\s*(\d{3,7})(?:\s*元)?/);
+        if(mBudgetWan){ out.budget = Math.round(parseFloat(mBudgetWan[1])*10000); }
+        else if(mBudgetYuan){ out.budget = Number(mBudgetYuan[1]); }
+        // 人数
+        const mP = txt.match(/(\d{1,2})\s*人/);
+        if(mP){ out.people = Number(mP[1]); }
+        // 偏好：逗号分隔的关键词，如“美食, 动漫, 亲子”
+        const prefMatch = txt.match(/喜欢([\u4e00-\u9fa5A-Za-z、，,\s]{2,})/);
+        if(prefMatch){ out.prefs = prefMatch[1].replace(/[，、]/g,',').split(',').map(s=>s.trim()).filter(Boolean); }
+        // 亲子标记
+        if(/带(孩子|娃)/.test(txt) && !out.prefs.includes('亲子')) out.prefs.push('亲子');
+        return out;
+    }
+
+    parseBtn.addEventListener('click', ()=>{
+        const res = parseFromText(nlpText.value.trim());
+        if(res.dest) dest.value = res.dest;
+        if(res.days) days.value = res.days;
+        if(res.budget) budget.value = res.budget;
+        if(res.people) people.value = res.people;
+        if(res.prefs?.length) prefs.value = res.prefs.join(', ');
+        setBudgetFromInput();
+    });
+
+    // =============== Demo 行程生成（前端虚构示例） ===============
+    function genItinerary(){
+        const d = (dest.value||'未定目的地').trim();
+        const start = date.value? new Date(date.value) : null;
+        const n = Math.max(1, Number(days.value||1));
+        const tags = (prefs.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+        const ppl = Number(people.value||1);
+        const bgt = Number(budget.value||0);
+
+        const lines = [];
+        for(let i=0;i<n;i++){
+            const dayLabel = start? new Date(start.getTime()+i*86400000).toLocaleDateString('zh-CN',{month:'2-digit',day:'2-digit'}) : `D${i+1}`;
+            const sugg = [];
+            if(tags.includes('美食')) sugg.push('本地小馆探店');
+            if(tags.includes('动漫')) sugg.push('主题周边店/打卡地');
+            if(tags.includes('亲子')) sugg.push('儿童友好景点/乐园');
+            if(tags.includes('自然风光')) sugg.push('城市公园或近郊徒步');
+            if(sugg.length===0) sugg.push('城市地标 + 特色街区');
+            lines.push({ day: dayLabel, plan: `${d}游览：${sugg.join(' · ')}` });
+        }
+
+        const perCap = ppl>0? Math.round(bgt/ppl) : bgt;
+        const html = `
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <span class="badge">目的地：<strong>${d}</strong></span>
+          <span class="badge">出发：<strong>${date.value||'未选'}</strong></span>
+          <span class="badge">天数：<strong>${n}</strong></span>
+          <span class="badge">预算合计：<strong>¥${bgt||0}</strong></span>
+          <span class="badge">人均预算：<strong>¥${perCap||0}</strong></span>
+          ${tags.length? `<span class="badge">偏好：${tags.map(t=>`<strong>${t}</strong>`).join('、')}</span>`: ''}
+        </div>
+        <div style="margin-top:8px">
+          ${lines.map(l=>`<div class="day"><strong>${l.day}</strong> — ${l.plan}</div>`).join('')}
+        </div>`;
+        planResult.innerHTML = html;
+        // 同步预算面板展示
+        setBudgetFromInput();
+        saveDraftToLocal();
+    }
+    genBtn.addEventListener('click', genItinerary);
+
+    // =============== LocalStorage 草稿持久化 ===============
+    const DRAFT_KEY = 'atp_draft';
+    function saveDraftToLocal(){
+        const data = {
+            dest: dest.value, date: date.value, days: days.value, budget: budget.value, people: people.value, prefs: prefs.value,
+            expenses: Store.expenses,
+            planHTML: planResult.innerHTML,
+        };
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(data));
+    }
+    function loadDraft(){
+        const raw = localStorage.getItem(DRAFT_KEY);
+        if(!raw) return;
+        try{
+            const d = JSON.parse(raw);
+            dest.value=d.dest||''; date.value=d.date||''; days.value=d.days||''; budget.value=d.budget||''; people.value=d.people||''; prefs.value=d.prefs||'';
+            Store.expenses = Array.isArray(d.expenses)? d.expenses : [];
+            renderExpenses(); updateSpent();
+            if(d.planHTML){ planResult.innerHTML = d.planHTML; }
+            setBudgetFromInput();
+        }catch{}
+    }
+    loadDraft();
+
+    // =============== 账户系统（本地模拟） ===============
+    const USERS_KEY = 'atp_users'; // {email: {email, passHash}}
+    function getUsers(){ try{ return JSON.parse(localStorage.getItem(USERS_KEY))||{} }catch{ return {} } }
+    function putUsers(obj){ localStorage.setItem(USERS_KEY, JSON.stringify(obj)); }
+
+    function hash(str){ // 极简 hash（仅演示）
+        let h = 0; for(const ch of str){ h = (h*131 + ch.charCodeAt(0))>>>0 } return String(h);
+    }
+
+    registerBtn.addEventListener('click', ()=>{
+        const u = email.value.trim(); const p = password.value;
+        if(!u||!p) return alert('请输入邮箱和密码');
+        const users = getUsers();
+        if(users[u]) return alert('该邮箱已注册');
+        users[u] = { email:u, passHash: hash(p) };
+        putUsers(users); alert('注册成功，请登录');
+    });
+    loginBtn.addEventListener('click', ()=>{
+        const u = email.value.trim(); const p = password.value;
+        const users = getUsers();
+        if(!users[u]) return alert('用户不存在');
+        if(users[u].passHash !== hash(p)) return alert('密码错误');
+        setSession({email:u});
+    });
+    logoutBtn.addEventListener('click', ()=> setSession(null));
+
+    // 保存/读取计划
+    function currentPlanData(){
+        return {
+            meta:{ savedAt: Date.now() },
+            inputs:{ dest:dest.value, date:date.value, days:days.value, budget:budget.value, people:people.value, prefs:prefs.value },
+            expenses: Store.expenses,
+            planHTML: planResult.innerHTML,
+        };
+    }
+    function plansKey(email){ return `atp_plans_${email}` }
+    function loadUserPlans(){
+        if(!Store.session) return [];
+        try{ return JSON.parse(localStorage.getItem(plansKey(Store.session.email)))||[] }catch{ return [] }
+    }
+    function saveUserPlans(list){ if(Store.session) localStorage.setItem(plansKey(Store.session.email), JSON.stringify(list)); }
+
+    savePlanBtn.addEventListener('click', ()=>{
+        if(!Store.session) return alert('请先登录');
+        const list = loadUserPlans();
+        list.unshift(currentPlanData());
+        saveUserPlans(list);
+        alert('已保存到“我的计划”（本地模拟存储）');
+    });
+
+    loadPlansBtn.addEventListener('click', ()=>{
+        if(!Store.session) return alert('请先登录');
+        const list = loadUserPlans();
+        renderPlans(list);
+    });
+
+    function renderPlans(list){
+        plansList.innerHTML = '';
+        if(!list.length){ plansList.innerHTML = '<div class="hint">暂无保存的计划。</div>'; return; }
+        list.forEach((p,idx)=>{
+            const wrap = document.createElement('div');
+            wrap.className='item';
+            const d = new Date(p.meta.savedAt).toLocaleString();
+            wrap.innerHTML = `
+          <div>
+            <strong>计划 ${list.length-idx}</strong>
+            <div class="hint">保存于 ${d} · ${p.inputs.dest||'未定'} · ${p.inputs.days||'-'} 天 · 预算 ¥${p.inputs.budget||0}</div>
+          </div>
+          <div>
+            <button class="btn" data-load="${idx}">载入</button>
+            <button class="btn warn" data-delplan="${idx}">删除</button>
+          </div>`;
+            plansList.appendChild(wrap);
+        });
+    }
+
+    plansList.addEventListener('click', (e)=>{
+        const li = loadUserPlans();
+        const loadIdx = e.target.getAttribute('data-load');
+        const delIdx = e.target.getAttribute('data-delplan');
+        if(loadIdx!==null){
+            const p = li[Number(loadIdx)];
+            if(!p) return;
+            dest.value=p.inputs.dest||''; date.value=p.inputs.date||''; days.value=p.inputs.days||''; budget.value=p.inputs.budget||''; people.value=p.inputs.people||''; prefs.value=p.inputs.prefs||'';
+            Store.expenses = p.expenses||[]; renderExpenses(); updateSpent(); setBudgetFromInput();
+            planResult.innerHTML = p.planHTML||'';
+            window.scrollTo({top:0,behavior:'smooth'});
+        }
+        if(delIdx!==null){
+            li.splice(Number(delIdx),1); saveUserPlans(li); renderPlans(li);
+        }
+    });
+
+    // 初始联动
+    setBudgetFromInput(); updateSpent();
+</script>
+</body>
+</html>
