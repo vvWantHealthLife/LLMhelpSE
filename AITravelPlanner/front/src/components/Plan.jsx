@@ -1,8 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 
 const Plan = () => {
   const [plan, setPlan] = useState(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recognizedText, setRecognizedText] = useState('');
+  const [recordingStatus, setRecordingStatus] = useState('');
+  const audioChunksRef = useRef([]);
+  const mediaRecorderRef = useRef(null);
 
   const generatePlan = async () => {
     const destination = document.getElementById('dest').value;
@@ -21,16 +26,94 @@ const Plan = () => {
     }
   };
 
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        setRecordingStatus('处理中...');
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+        
+        // 将音频数据转换为base64
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = async () => {
+          const base64data = reader.result.split(',')[1];
+          
+          try {
+            // 调用后端科大讯飞API
+            const response = await axios.post('http://localhost:3000/api/speech-recognition', {
+              audioData: base64data
+            });
+            
+            if (response.data.success) {
+              setRecognizedText(response.data.text);
+              document.getElementById('nlpText').value = response.data.text;
+              setRecordingStatus('识别成功');
+            } else {
+              setRecordingStatus('识别失败: ' + response.data.error);
+            }
+          } catch (error) {
+            console.error('语音识别请求失败:', error);
+            setRecordingStatus('请求失败: ' + error.message);
+          }
+        };
+        
+        // 关闭麦克风
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingStatus('录音中...');
+    } catch (error) {
+      console.error('无法访问麦克风:', error);
+      setRecordingStatus('错误: 无法访问麦克风');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  const handleMicClick = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
+
   return (
     <section className="card" id="panel-plan">
       <h2>1) 智能行程规划</h2>
       <div className="row">
         <div style={{ flex: '1 1 240px' }}>
           <label>自然语言需求（可语音）</label>
-          <textarea id="nlpText" placeholder="例如：我想去日本，5天，预算1万元，喜欢美食和动漫，带孩子"></textarea>
+          <textarea id="nlpText" placeholder="例如：我想去日本，5天，预算1万元，喜欢美食和动漫，带孩子" value={recognizedText} onChange={(e) => setRecognizedText(e.target.value)}></textarea>
           <div className="row" style={{ marginTop: '8px' }}>
-            <button className="btn" id="micBtn">🎤 开始语音</button>
-            <span className="hint" id="sttHint">您的浏览器需支持 Web Speech API（建议 Chrome/Edge）。</span>
+            <button 
+              className={`btn ${isRecording ? 'warn' : ''}`} 
+              id="micBtn" 
+              onClick={handleMicClick}
+            >
+              {isRecording ? '🛑 停止录音' : '🎤 开始语音'}
+            </button>
+            <span className="hint" id="sttHint">
+              {recordingStatus || '使用科大讯飞API进行语音识别'}
+            </span>
           </div>
         </div>
       </div>
