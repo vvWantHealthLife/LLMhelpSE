@@ -14,8 +14,10 @@ const openai = new OpenAI({
   apiKey: process.env.LLM_API_KEY,
 });
 
-// TODO: 将您的语音识别 API 密钥添加到 .env 文件中
+// 科大讯飞语音识别API凭证
 const speechApiKey = process.env.SPEECH_API_KEY;
+const speechApiAppId = process.env.SPEECH_API_APPID;
+const speechApiSecret = process.env.SPEECH_API_SECRET;
 
 // TODO: 将您的地图 API 密钥添加到 .env 文件中
 const mapApiKey = process.env.MAP_API_KEY;
@@ -42,6 +44,35 @@ app.post('/api/budget', (req, res) => {
   // TODO: 使用 LLM API 实现 AI 预算分析逻辑
   const { expenses } = req.body;
   res.json({ message: '预算更新成功！', data: { expenses } });
+});
+
+// 科大讯飞语音识别API端点
+app.post('/api/speech-recognition', (req, res) => {
+  try {
+    const { audioData } = req.body;
+    
+    // 验证API凭证是否存在
+    if (!speechApiKey || !speechApiAppId || !speechApiSecret) {
+      return res.status(500).json({ error: '语音识别API凭证未配置' });
+    }
+    
+    // 这里实现与科大讯飞API的集成
+    // 注意：这是一个示例实现，实际使用时需要根据科大讯飞API文档进行调整
+    console.log('使用科大讯飞API进行语音识别');
+    console.log(`APPID: ${speechApiAppId}`);
+    console.log(`API Key: ${speechApiKey.substring(0, 4)}...`); // 仅打印部分API Key以保护安全
+    
+    // 模拟语音识别结果
+    // 实际实现中，这里应该调用科大讯飞API并处理返回结果
+    res.json({ 
+      success: true, 
+      text: '这是从语音识别得到的文本',
+      message: '语音识别成功'
+    });
+  } catch (error) {
+    console.error('语音识别错误:', error);
+    res.status(500).json({ error: '语音识别处理失败' });
+  }
 });
 
 const mongoose = require('mongoose');
