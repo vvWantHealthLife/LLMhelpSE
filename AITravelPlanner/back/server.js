@@ -7,7 +7,9 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+const maxBodySize = process.env.MAX_BODY_SIZE || '15mb';
+app.use(express.json({ limit: maxBodySize }));
+app.use(express.urlencoded({ limit: maxBodySize, extended: true }));
 
 // TODO: 将您的大型语言模型 API 密钥添加到 .env 文件中
 const openai = new OpenAI({
@@ -239,6 +241,7 @@ app.post('/api/speech-recognition', async (req, res) => {
       function convertWavBase64ToPCM16k(base64) {
         try {
           const cleaned = sanitizeBase64(base64);
+          console.log(`[音频转换] 收到 Base64，清洗后长度: ${cleaned.length}`);
           const buffer = Buffer.from(cleaned, 'base64');
           const isWav =
             buffer.slice(0, 4).toString('ascii') === 'RIFF' &&
@@ -248,11 +251,13 @@ app.post('/api/speech-recognition', async (req, res) => {
             return buffer; // 假定已是原始PCM（若非PCM会导致识别为空）
           }
           const decoded = wav.decode(buffer);
-          const { sampleRate, channelData } = decoded;
+          const { sampleRate, channelData, bitDepth } = decoded;
+          console.log(`[音频转换] WAV解码成功: 采样率=${sampleRate}, 声道=${channelData.length}, 位深=${bitDepth}, 数据长度=${channelData[0]?.length}`);
           // 合并为单声道
           let mono;
           if (channelData.length === 1) {
             mono = channelData[0];
+            console.log('[音频转换] 音频为单声道，直接使用。');
           } else {
             const ch0 = channelData[0];
             const ch1 = channelData[1];
@@ -260,8 +265,11 @@ app.post('/api/speech-recognition', async (req, res) => {
             mono = new Float32Array(len);
             for (let i = 0; i < len; i++) mono[i] = (ch0[i] + ch1[i]) / 2;
           }
+          console.log(`[音频转换] 转换为单声道 Float32Array，长度: ${mono.length}`);
           const resampled = resampleTo16000(mono, sampleRate || 16000);
-          return floatTo16BitPCM(resampled);
+          const pcm16k = floatTo16BitPCM(resampled);
+          console.log(`[音频转换] 重采样并转为16-bit PCM，最终Buffer长度: ${pcm16k.length}`);
+          return pcm16k;
         } catch (e) {
           console.warn('WAV 解码失败，按原始PCM处理:', e.message);
           const cleaned = sanitizeBase64(base64);
@@ -282,10 +290,12 @@ app.post('/api/speech-recognition', async (req, res) => {
 
       function parseResultText(payload) {
         try {
-          const wsArr = payload?.result?.ws || [];
-          return wsArr
-            .map((seg) => (seg.cw && seg.cw[0] && seg.cw[0].w) || '')
+          const result = (payload && payload.data && payload.data.result) || payload?.result;
+          const wsArr = (result && result.ws) || [];
+          const text = wsArr
+            .map((seg) => (seg && seg.cw && seg.cw[0] && seg.cw[0].w) || '')
             .join('');
+          return text;
         } catch (e) {
           return '';
         }
@@ -354,19 +364,57 @@ app.post('/api/speech-recognition', async (req, res) => {
           ws.on('message', (msg) => {
             try {
               const payload = JSON.parse(msg.toString());
-              // console.log('WS返回:', payload);
               if (payload.code !== 0) {
                 console.error('WS错误:', payload);
                 return;
               }
-              const part = parseResultText(payload);
-              if (part) resultText = part; // 使用最新动态修正结果
+
+              // 解析 wpgs 动态修正结果：按 pgs(apd/rpl) 累积或替换
+              const res = (payload.data && payload.data.result) || payload.result || null;
+              if (!res) return;
+
+              // 将本次片段的词汇提取为数组
+              const wsArr = Array.isArray(res.ws) ? res.ws : [];
+              const words = [];
+              for (const seg of wsArr) {
+                if (Array.isArray(seg.cw) && seg.cw[0] && typeof seg.cw[0].w === 'string') {
+                  words.push(seg.cw[0].w);
+                }
+              }
+
+              // 在函数作用域外维护的累积 tokens（如果尚未初始化，则在首次消息初始化）
+              if (!Array.isArray(ws._tokens)) ws._tokens = [];
+              const tokens = ws._tokens;
+
+              if (res.pgs === 'apd') {
+                // 追加模式
+                tokens.push(...words);
+              } else if (res.pgs === 'rpl' && Array.isArray(res.rg) && res.rg.length === 2) {
+                // 替换模式，依据 rg 范围替换（rg 为 1-based 索引，含端点）
+                const start = Math.max(0, Number(res.rg[0]) - 1);
+                const end = Math.max(start, Number(res.rg[1]) - 1);
+                tokens.splice(start, end - start + 1, ...words);
+              } else {
+                // 未提供 pgs/rg 时的兜底：使用最新片段覆盖（避免只保留最后一个标点）
+                if (words.length) {
+                  ws._tokens = [...words];
+                }
+              }
+
+              resultText = ws._tokens.join('');
+              const status = (payload.data && payload.data.status) ?? payload.status;
+              const isLast = (res.ls === 1) || (status === 2 || status === '2');
+              console.log(
+                `[IAT WS] 动态修正状态: pgs=${res.pgs || '-'}, rg=${Array.isArray(res.rg) ? res.rg.join(',') : '-'}, ` +
+                `最新片段='${words.join('')}', 汇总='${resultText}'${isLast ? ' [最终]' : ''}`
+              );
             } catch (e) {
               console.warn('WS消息解析失败:', e.message);
             }
           });
 
           ws.on('close', () => {
+            console.log('[IAT WS] 识别完成，最终文本:', resultText || '(空文本)');
             resolve(resultText || '');
           });
 
@@ -378,7 +426,12 @@ app.post('/api/speech-recognition', async (req, res) => {
 
       try {
         const text = await iatWsRecognize(audioData);
-        return res.json({ success: true, text, message: '语音识别成功（WS）' });
+        const trimmed = String(text || '').trim();
+        console.log('[IAT WS] 最终识别文本:', trimmed || '(空文本)');
+        if (!trimmed) {
+          return res.json({ success: false, text: '', message: '语音识别为空（WS）' });
+        }
+        return res.json({ success: true, text: trimmed, message: '语音识别成功（WS）' });
       } catch (wsErr) {
         console.error('IAT WS调用失败，回退到HTTP旧版:', wsErr);
         // 下面继续执行HTTP旧版调用作为回退
@@ -442,7 +495,12 @@ app.post('/api/speech-recognition', async (req, res) => {
       if (data.code === 0) {
         // 返回识别文本（不同版本返回结构可能不同，做兼容处理）
         const text = (data.data && (data.data.result || data.data)) || '';
-        res.json({ success: true, text, message: '语音识别成功' });
+        const trimmed = String(text || '').trim();
+        console.log('[IAT HTTP] 最终识别文本:', trimmed || '(空文本)');
+        if (!trimmed) {
+          return res.json({ success: false, text: '', message: '语音识别为空（HTTP）' });
+        }
+        return res.json({ success: true, text: trimmed, message: '语音识别成功（HTTP）' });
       } else {
         throw new Error(`科大讯飞API返回错误: ${JSON.stringify(data)}`);
       }

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>高德路线测试页</title>
+  <style>
+    body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin: 0; background: #0b1020; color: #e7ebff; }
+    .container { max-width: 980px; margin: 0 auto; padding: 16px; }
+    .card { background: #121733; border: 1px solid #2a366e; border-radius: 16px; padding: 16px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    label.input { display: grid; gap: 6px; flex: 1 1 48%; }
+    input { padding: 10px 12px; border-radius: 12px; border: 1px solid #2a366e; background: #0f1430; color: #e7ebff; }
+    .hint { color: #9fb0ff; }
+    #map { height: 420px; border-radius: 12px; overflow: hidden; }
+  </style>
+  <script>
+    // 高德 JSAPI 安全校验配置（需在加载 SDK 前设置）
+    window._AMapSecurityConfig = { securityJsCode: '348beb10a26d4fee75f7cb041170212d' };
+  </script>
+  <script src="https://webapi.amap.com/maps?v=2.0&key=83b593b78e18eacb3a8da56d19091a09"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>高德地图 · 路线测试</h1>
+    <p class="hint">在此页面输入起点与终点，查看路线规划是否可用。</p>
+
+    <div class="card">
+      <div class="row">
+        <label class="input">
+          <span>起点地址</span>
+          <input id="start" placeholder="例如：上海虹桥火车站" value="北京天安门" />
+        </label>
+        <label class="input">
+          <span>终点地址</span>
+          <input id="end" placeholder="例如：上海站" value="北京首都国际机场" />
+        </label>
+      </div>
+      <div class="row" style="margin-top:8px;align-items:center;justify-content:space-between">
+        <p class="hint" id="summary">输入起点与终点后，点击「查询路线」。</p>
+        <button id="searchBtn">查询路线</button>
+      </div>
+      <div id="map"></div>
+    </div>
+  </div>
+
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const map = new AMap.Map('map', { viewMode: '2D', zoom: 11, center: [116.397428, 39.90923] });
+
+      // 动态加载插件，避免 Geocoder/Driving 未就绪导致的构造函数错误
+      AMap.plugin(['AMap.Geocoder', 'AMap.Driving'], () => {
+        const geocoder = new AMap.Geocoder();
+        const driving = new AMap.Driving({ policy: AMap.DrivingPolicy.LEAST_TIME, showTraffic: true, map });
+
+        async function geocode(addr) {
+          return new Promise((resolve, reject) => {
+            geocoder.getLocation(addr, (status, result) => {
+              if (status === 'complete' && result.geocodes && result.geocodes.length) {
+                resolve(result.geocodes[0].location);
+              } else {
+                reject(new Error('地址解析失败: ' + addr));
+              }
+            });
+          });
+        }
+
+        function toLngLat(val) {
+          if (!val) return null;
+          if (val instanceof AMap.LngLat) return val;
+          const lng = val.lng ?? (typeof val.getLng === 'function' ? val.getLng() : Array.isArray(val) ? val[0] : undefined);
+          const lat = val.lat ?? (typeof val.getLat === 'function' ? val.getLat() : Array.isArray(val) ? val[1] : undefined);
+          if (typeof lng === 'number' && typeof lat === 'number') return new AMap.LngLat(lng, lat);
+          return null;
+        }
+
+        async function planRoute() {
+          const start = document.getElementById('start').value.trim();
+          const end = document.getElementById('end').value.trim();
+          if (!start || !end) {
+            document.getElementById('summary').textContent = '请输入起点和终点地址';
+            return;
+          }
+          try {
+            const sLoc = await geocode(start);
+            const eLoc = await geocode(end);
+            const s = toLngLat(sLoc);
+            const e = toLngLat(eLoc);
+            if (!s || !e) {
+              document.getElementById('summary').textContent = '坐标转换失败，请检查地址';
+              return;
+            }
+            driving.search(s, e, (status, result) => {
+              if (status === 'complete' && result.routes && result.routes.length) {
+                const r = result.routes[0];
+                const text = `距离约 ${(r.distance / 1000).toFixed(1)} 公里 · 预计 ${(r.time / 60).toFixed(0)} 分钟`;
+                document.getElementById('summary').textContent = text;
+              } else {
+                document.getElementById('summary').textContent = '未找到路线';
+              }
+            });
+          } catch (e) {
+            document.getElementById('summary').textContent = e.message || '地址解析失败';
+          }
+        }
+        document.getElementById('searchBtn').addEventListener('click', planRoute);
+      });
+    });
+  </script>
+</body>
+</html>

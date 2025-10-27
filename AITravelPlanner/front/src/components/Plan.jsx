@@ -10,6 +10,7 @@ const Plan = () => {
   const [recordingStatus, setRecordingStatus] = useState('');
   const audioChunksRef = useRef([]);
   const mediaRecorderRef = useRef(null);
+  const recognitionRef = useRef(null);
   const [startDate, setStartDate] = useState('');
 
   const generatePlan = async () => {
@@ -44,6 +45,44 @@ const Plan = () => {
     }
   };
 
+  // ===== 浏览器语音识别兜底（Web Speech API） =====
+  const startBrowserRecognition = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      setRecordingStatus('当前浏览器不支持 Web Speech API');
+      return;
+    }
+    const recog = new SR();
+    recognitionRef.current = recog;
+    recog.lang = 'zh-CN';
+    recog.interimResults = false;
+    recog.maxAlternatives = 1;
+    setIsRecording(true);
+    setRecordingStatus('浏览器语音识别中...');
+    recog.onresult = (e) => {
+      const text = e.results?.[0]?.[0]?.transcript || '';
+      setRecognizedText(text);
+      const nlpEl = document.getElementById('nlpText');
+      if (nlpEl) nlpEl.value = text;
+      const trimmed = String(text || '').trim();
+      console.log('[WebSpeech] 识别文本:', trimmed);
+      setRecordingStatus(`识别成功（浏览器）：${trimmed || '(空文本)'}`);
+    };
+    recog.onerror = (e) => {
+      setRecordingStatus('浏览器识别错误: ' + (e.error || '未知错误'));
+    };
+    recog.onend = () => {
+      setIsRecording(false);
+    };
+    try {
+      recog.start();
+    } catch (e) {
+      setRecordingStatus('无法启动浏览器识别: ' + e.message);
+      setIsRecording(false);
+    }
+  };
+
+  // ===== 录音并在前端转 WAV(16k) =====
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -59,33 +98,53 @@ const Plan = () => {
 
       mediaRecorder.onstop = async () => {
         setRecordingStatus('处理中...');
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-        
-        // 将音频数据转换为base64
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = async () => {
-          const base64data = reader.result.split(',')[1];
-          
-          try {
-            // 调用后端科大讯飞API
-            const response = await axios.post('http://localhost:3000/api/speech-recognition', {
-              audioData: base64data
-            });
-            
-            if (response.data.success) {
-              setRecognizedText(response.data.text);
-              document.getElementById('nlpText').value = response.data.text;
-              setRecordingStatus('识别成功');
+        const audioBlob = new Blob(audioChunksRef.current, { type: audioChunksRef.current[0]?.type || 'audio/webm' });
+        console.log('[前端音频] MediaRecorder 停止: Blob 类型=', audioBlob.type, ' 片段数=', audioChunksRef.current.length);
+        try {
+          // 使用 AudioContext 解码成 AudioBuffer
+          const arrayBuf = await audioBlob.arrayBuffer();
+          console.log('[前端音频] Blob ArrayBuffer 长度:', arrayBuf.byteLength);
+          const ac = new (window.AudioContext || window.webkitAudioContext)();
+          const audioBuffer = await ac.decodeAudioData(arrayBuf);
+
+          // 将 AudioBuffer 转为 16k 采样率的 WAV，并取 base64
+          const base64data = audioBufferToWavBase64(audioBuffer, 16000);
+          console.log('[前端音频] 生成 WAV(Base64) 长度:', base64data.length);
+
+          // 调用后端科大讯飞API
+          const response = await axios.post('http://localhost:3000/api/speech-recognition', {
+            audioData: base64data
+          });
+
+          if (response.data.success) {
+            console.log('[后端返回] /api/speech-recognition:', response.data);
+            const textRaw = response.data.text ?? '';
+            const text = String(textRaw);
+            const trimmed = text.trim();
+            if (!trimmed) {
+              setRecordingStatus('识别成功但文本为空，切换到浏览器识别...');
+              console.warn('[科大讯飞] 成功但空文本，启用浏览器兜底');
+              try { stream.getTracks().forEach(track => track.stop()); } catch (_) {}
+              startBrowserRecognition();
             } else {
-              setRecordingStatus('识别失败: ' + response.data.error);
+              console.log('[科大讯飞] 识别文本(服务端):', trimmed);
+              setRecognizedText(trimmed);
+              const nlpEl = document.getElementById('nlpText');
+              if (nlpEl) nlpEl.value = trimmed;
+              setRecordingStatus(`识别成功：${trimmed}`);
             }
-          } catch (error) {
-            console.error('语音识别请求失败:', error);
-            setRecordingStatus('请求失败: ' + error.message);
+          } else {
+            setRecordingStatus('识别失败，切换到浏览器识别...');
+            try { stream.getTracks().forEach(track => track.stop()); } catch (_) {}
+            startBrowserRecognition();
           }
-        };
-        
+        } catch (error) {
+          console.error('语音处理/识别失败，启用浏览器兜底:', error);
+          setRecordingStatus('请求失败，即将使用浏览器识别');
+          try { stream.getTracks().forEach(track => track.stop()); } catch (_) {}
+          startBrowserRecognition();
+        }
+
         // 关闭麦克风
         stream.getTracks().forEach(track => track.stop());
       };
@@ -103,6 +162,11 @@ const Plan = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
+      return;
+    }
+    if (recognitionRef.current && isRecording) {
+      try { recognitionRef.current.stop(); } catch (_) {}
+      setIsRecording(false);
     }
   };
 
@@ -113,6 +177,94 @@ const Plan = () => {
       startRecording();
     }
   };
+
+  // ===== 将 AudioBuffer 编码为 WAV(Base64)，并做 16k 下采样 =====
+  function audioBufferToWavBase64(audioBuffer, targetSampleRate = 16000) {
+    // 取单声道
+    const srcRate = audioBuffer.sampleRate;
+    const srcChannels = audioBuffer.numberOfChannels;
+    let chData = srcChannels > 1
+      ? mixToMono(audioBuffer.getChannelData(0), audioBuffer.getChannelData(1))
+      : audioBuffer.getChannelData(0);
+    console.log(`[前端音频] 解码 AudioBuffer: 采样率=${srcRate}, 声道=${srcChannels}, 原始长度=${chData.length}`);
+
+    const down = downsampleBuffer(chData, srcRate, targetSampleRate);
+    let peak = 0;
+    for (let i = 0; i < down.length; i++) {
+      const v = Math.abs(down[i]);
+      if (v > peak) peak = v;
+    }
+    console.log(`[前端音频] 下采样至 ${targetSampleRate}Hz: 长度=${down.length}, 峰值=${peak.toFixed(6)}`);
+
+    const wavBuffer = encodeWAV(down, targetSampleRate);
+    const bytes = new Uint8Array(wavBuffer);
+    console.log(`[前端音频] 生成 WAV 字节长度: ${bytes.byteLength}`);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  }
+
+  function mixToMono(ch0, ch1) {
+    const len = Math.min(ch0.length, ch1.length);
+    const out = new Float32Array(len);
+    for (let i = 0; i < len; i++) out[i] = (ch0[i] + ch1[i]) / 2;
+    return out;
+  }
+
+  function downsampleBuffer(buffer, sampleRate, outRate) {
+    if (outRate === sampleRate) return buffer;
+    const ratio = sampleRate / outRate;
+    const newLen = Math.floor(buffer.length / ratio);
+    const result = new Float32Array(newLen);
+    let offset = 0;
+    for (let i = 0; i < newLen; i++) {
+      // 简单平均法降采样
+      const start = Math.floor(i * ratio);
+      const end = Math.floor((i + 1) * ratio);
+      let sum = 0, count = 0;
+      for (let j = start; j < end && j < buffer.length; j++) { sum += buffer[j]; count++; }
+      result[i] = count ? sum / count : buffer[start];
+      offset = end;
+    }
+    return result;
+  }
+
+  function encodeWAV(samples, sampleRate) {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+
+    // RIFF/WAVE header
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeString(view, 8, 'WAVE');
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true); // PCM
+    view.setUint16(20, 1, true); // format
+    view.setUint16(22, 1, true); // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); // byte rate (16-bit mono)
+    view.setUint16(32, 2, true); // block align
+    view.setUint16(34, 16, true); // bits per sample
+    writeString(view, 36, 'data');
+    view.setUint32(40, samples.length * 2, true);
+
+    // PCM samples
+    floatTo16BitPCM(view, 44, samples);
+    return buffer;
+  }
+
+  function writeString(view, offset, string) {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  }
+
+  function floatTo16BitPCM(view, offset, input) {
+    for (let i = 0; i < input.length; i++, offset += 2) {
+      let s = Math.max(-1, Math.min(1, input[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+  }
 
   return (
     <>
