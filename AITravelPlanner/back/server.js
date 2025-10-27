@@ -25,6 +25,91 @@ const speechApiSecret = process.env.SPEECH_API_SECRET;
 // TODO: 将您的地图 API 密钥添加到 .env 文件中
 const mapApiKey = process.env.MAP_API_KEY;
 
+// 高德地图：配置查询
+app.get('/api/map/config', (req, res) => {
+  try {
+    res.json({ enabled: !!mapApiKey, keyPresent: !!mapApiKey });
+  } catch (e) {
+    res.status(500).json({ error: '地图配置查询失败' });
+  }
+});
+
+// 高德地图：地址地理编码
+app.post('/api/map/geocode', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const { address, city } = req.body || {};
+    if (!mapApiKey) return res.status(500).json({ error: 'MAP_API_KEY 未配置' });
+    if (!address || !String(address).trim()) return res.status(400).json({ error: '缺少 address' });
+    const url = 'https://restapi.amap.com/v3/geocode/geo';
+    const { data } = await axios.get(url, {
+      params: { key: mapApiKey, address: String(address).trim(), city },
+      timeout: 15000,
+    });
+    if (data.status !== '1') return res.status(502).json({ error: '高德地理编码调用失败', data });
+    const first = (data.geocodes || [])[0];
+    if (!first || !first.location) return res.status(404).json({ error: '未找到坐标', data });
+    const [lng, lat] = first.location.split(',').map(Number);
+    res.json({ ok: true, location: { lng, lat }, raw: first });
+  } catch (error) {
+    console.error('Geocode error:', error?.response?.data || error.message);
+    res.status(500).json({ error: '调用高德地理编码失败' });
+  }
+});
+
+// 高德地图：驾车路线规划（地址或坐标）
+app.post('/api/map/route', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const { origin, destination } = req.body || {};
+    if (!mapApiKey) return res.status(500).json({ error: 'MAP_API_KEY 未配置' });
+    if (!origin || !destination) return res.status(400).json({ error: '缺少 origin/destination' });
+
+    // 解析成坐标：支持字符串地址或 {lng,lat}
+    async function toCoord(input) {
+      if (typeof input === 'string') {
+        const geo = await axios.get('https://restapi.amap.com/v3/geocode/geo', {
+          params: { key: mapApiKey, address: input },
+          timeout: 15000,
+        });
+        const g = geo.data?.geocodes?.[0];
+        if (!g?.location) throw new Error('地址解析失败: ' + input);
+        const [lng, lat] = g.location.split(',').map(Number);
+        return { lng, lat };
+      }
+      if (typeof input === 'object' && input.lng != null && input.lat != null) return input;
+      throw new Error('无法解析坐标');
+    }
+
+    const o = await toCoord(origin);
+    const d = await toCoord(destination);
+
+    const routeUrl = 'https://restapi.amap.com/v3/direction/driving';
+    const { data } = await axios.get(routeUrl, {
+      params: {
+        key: mapApiKey,
+        origin: `${o.lng},${o.lat}`,
+        destination: `${d.lng},${d.lat}`,
+        extensions: 'base',
+      },
+      timeout: 20000,
+    });
+    if (data.status !== '1') return res.status(502).json({ error: '高德驾车路线调用失败', data });
+    const path = data.route?.paths?.[0];
+    if (!path) return res.status(404).json({ error: '未找到路线', data });
+    const summary = {
+      distanceMeters: Number(path.distance || 0),
+      durationSeconds: Number(path.duration || 0),
+      strategy: path.strategy || '',
+      stepsCount: (path.steps || []).length,
+    };
+    res.json({ ok: true, summary, raw: data.route });
+  } catch (error) {
+    console.error('Route error:', error?.response?.data || error.message);
+    res.status(500).json({ error: '调用高德驾车路线失败' });
+  }
+});
+
 app.post('/api/plan', async (req, res) => {
   try {
     const { destination, duration, interests, nlpText } = req.body;

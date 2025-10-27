@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import RoutePanel from './RoutePanel';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 
@@ -114,6 +115,7 @@ const Plan = () => {
   };
 
   return (
+    <>
     <section className="card" id="panel-plan">
       <h2>1) 智能行程规划</h2>
       <div className="row">
@@ -185,6 +187,8 @@ const Plan = () => {
         </div>
       </div>
     </section>
+    <RoutePanel />
+    </>
   );
 };
 
