@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
+import ReactMarkdown from 'react-markdown';
 
 const Plan = () => {
   const [plan, setPlan] = useState(null);
@@ -8,6 +9,7 @@ const Plan = () => {
   const [recordingStatus, setRecordingStatus] = useState('');
   const audioChunksRef = useRef([]);
   const mediaRecorderRef = useRef(null);
+  const [startDate, setStartDate] = useState('');
 
   const generatePlan = async () => {
     const destination = document.getElementById('dest').value;
@@ -23,6 +25,21 @@ const Plan = () => {
       setPlan(response.data.plan);
     } catch (error) {
       console.error('Error generating plan:', error);
+    }
+  };
+
+  const generatePlanFromText = async () => {
+    const nlpText = recognizedText || document.getElementById('nlpText').value || '';
+    if (!nlpText.trim()) {
+      alert('请先输入自然语言需求');
+      return;
+    }
+    try {
+      const response = await axios.post('http://localhost:3000/api/plan', { nlpText });
+      setPlan(response.data.plan);
+    } catch (error) {
+      console.error('Error generating plan from text:', error);
+      alert('生成失败，请稍后重试');
     }
   };
 
@@ -124,7 +141,15 @@ const Plan = () => {
         </div>
         <div style={{ flex: '1 1 160px' }}>
           <label>出发日期</label>
-          <input type="date" id="date" />
+          <input
+            type="date"
+            id="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            onFocus={(e) => e.target.showPicker && e.target.showPicker()}
+            inputMode="numeric"
+            placeholder="YYYY-MM-DD"
+          />
         </div>
         <div style={{ flex: '1 1 140px' }}>
           <label>天数</label>
@@ -147,12 +172,13 @@ const Plan = () => {
       </div>
       <div className="row" style={{ marginTop: '12px' }}>
         <button className="btn ghost" id="parseBtn">🔎 从自然语言中提取并填充</button>
+        <button className="btn" onClick={generatePlanFromText}>🧠 直接用自然语言生成</button>
         <button className="btn primary" id="genBtn" onClick={generatePlan}>✨ 生成行程</button>
       </div>
       <div style={{ marginTop: '14px' }}>
         <div className="result" id="planResult">
           {plan ? (
-            <pre>{plan}</pre>
+            <ReactMarkdown>{plan}</ReactMarkdown>
           ) : (
             <span className="hint">生成的行程会显示在这里。</span>
           )}

@@ -27,9 +27,14 @@ const mapApiKey = process.env.MAP_API_KEY;
 
 app.post('/api/plan', async (req, res) => {
   try {
-    const { destination, duration, interests } = req.body;
+    const { destination, duration, interests, nlpText } = req.body;
 
-    const prompt = `请为我创建一个为期 ${duration} 天的 ${destination} 旅行计划。我的兴趣是 ${interests}。`;
+    let prompt = '';
+    if (nlpText && String(nlpText).trim()) {
+      prompt = `请根据以下自然语言需求，生成详细旅行计划（包含每日安排、预算建议与注意事项）：\n${String(nlpText).trim()}`;
+    } else {
+      prompt = `请为我创建一个为期 ${duration} 天的 ${destination} 旅行计划。我的兴趣是 ${interests}。`;
+    }
 
     // 优先调用：百炼（OpenAI 兼容模式）
     if (bailianApiKey) {
@@ -384,14 +389,15 @@ mongoose.connect(process.env.DB_CONNECTION_STRING, { useNewUrlParser: true, useU
 const UserSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
+  displayName: { type: String, default: '' },
 });
 const User = mongoose.model('User', UserSchema);
 
 app.post('/api/register', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password, displayName } = req.body;
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ username, password: hashedPassword });
+    const user = new User({ username, password: hashedPassword, displayName: displayName || '' });
     await user.save();
     res.status(201).json({ message: '用户注册成功' });
   } catch (error) {
@@ -414,6 +420,112 @@ app.post('/api/login', async (req, res) => {
     res.json({ token });
   } catch (error) {
     res.status(500).json({ error: '登录失败' });
+  }
+});
+
+// ========== 新增：JWT 鉴权中间件 ==========
+function authenticate(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  if (!token) return res.status(401).json({ error: '未提供令牌' });
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.userId = decoded.userId;
+    next();
+  } catch (e) {
+    return res.status(401).json({ error: '令牌无效' });
+  }
+}
+
+// ========== 新增：当前用户资料接口 ==========
+app.get('/api/me', authenticate, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId, 'username displayName _id').lean();
+    if (!user) return res.status(404).json({ error: '用户不存在' });
+    res.json({ user });
+  } catch (err) {
+    res.status(500).json({ error: '查询用户资料失败' });
+  }
+});
+
+// ========== 新增：计划模型 ==========
+const PlanSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  inputs: {
+    dest: String,
+    date: String,
+    days: Number,
+    budget: Number,
+    people: Number,
+    prefs: String,
+  },
+  expenses: [{ name: String, amt: Number, cat: String }],
+  planMarkdown: String,
+}, { timestamps: true });
+
+const Plan = mongoose.model('Plan', PlanSchema);
+
+// ========== 新增：计划 CRUD ==========
+// 创建计划
+app.post('/api/plans', authenticate, async (req, res) => {
+  try {
+    const { inputs, expenses, planMarkdown } = req.body;
+    const plan = await Plan.create({ userId: req.userId, inputs, expenses: expenses || [], planMarkdown });
+    res.status(201).json({ plan });
+  } catch (error) {
+    console.error('创建计划失败:', error);
+    res.status(500).json({ error: '创建计划失败' });
+  }
+});
+
+// 获取当前用户的所有计划
+app.get('/api/plans', authenticate, async (req, res) => {
+  try {
+    const plans = await Plan.find({ userId: req.userId }).sort({ createdAt: -1 });
+    res.json({ plans });
+  } catch (error) {
+    console.error('获取计划失败:', error);
+    res.status(500).json({ error: '获取计划失败' });
+  }
+});
+
+// 获取单个计划
+app.get('/api/plans/:id', authenticate, async (req, res) => {
+  try {
+    const plan = await Plan.findOne({ _id: req.params.id, userId: req.userId });
+    if (!plan) return res.status(404).json({ error: '未找到计划' });
+    res.json({ plan });
+  } catch (error) {
+    console.error('获取单个计划失败:', error);
+    res.status(500).json({ error: '获取单个计划失败' });
+  }
+});
+
+// 更新计划
+app.put('/api/plans/:id', authenticate, async (req, res) => {
+  try {
+    const updated = await Plan.findOneAndUpdate(
+      { _id: req.params.id, userId: req.userId },
+      req.body,
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ error: '未找到计划' });
+    res.json({ plan: updated });
+  } catch (error) {
+    console.error('更新计划失败:', error);
+    res.status(500).json({ error: '更新计划失败' });
+  }
+});
+
+// 删除计划
+app.delete('/api/plans/:id', authenticate, async (req, res) => {
+  try {
+    const del = await Plan.findOneAndDelete({ _id: req.params.id, userId: req.userId });
+    if (!del) return res.status(404).json({ error: '未找到计划' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('删除计划失败:', error);
+    res.status(500).json({ error: '删除计划失败' });
   }
 });
 
