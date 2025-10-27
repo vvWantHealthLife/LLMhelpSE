@@ -14,6 +14,9 @@ const openai = new OpenAI({
   apiKey: process.env.LLM_API_KEY,
 });
 
+// 新增：百炼（阿里云 DashScope）API 密钥
+const bailianApiKey = process.env.BAILIAN_API_KEY;
+
 // 科大讯飞语音识别API凭证
 const speechApiKey = process.env.SPEECH_API_KEY;
 const speechApiAppId = process.env.SPEECH_API_APPID;
@@ -28,14 +31,43 @@ app.post('/api/plan', async (req, res) => {
 
     const prompt = `请为我创建一个为期 ${duration} 天的 ${destination} 旅行计划。我的兴趣是 ${interests}。`;
 
+    // 优先调用：百炼（OpenAI 兼容模式）
+    if (bailianApiKey) {
+      const axios = require('axios');
+      try {
+        const resp = await axios.post(
+          'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+          {
+            model: process.env.BAILIAN_MODEL || 'qwen-turbo',
+            messages: [{ role: 'user', content: prompt }],
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${bailianApiKey}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 20000,
+          }
+        );
+        const planText = resp.data?.choices?.[0]?.message?.content || '';
+        if (planText) {
+          return res.json({ plan: planText });
+        }
+        console.warn('百炼返回为空，继续回退到 OpenAI');
+      } catch (err) {
+        console.warn('百炼调用失败，回退到 OpenAI:', err?.response?.data || err.message);
+      }
+    }
+
+    // 回退：OpenAI（若未配置或失败则返回错误）
     const completion = await openai.chat.completions.create({
       messages: [{ role: 'user', content: prompt }],
-      model: 'gpt-3.5-turbo',
+      model: process.env.OPENAI_MODEL || 'gpt-3.5-turbo',
     });
 
     res.json({ plan: completion.choices[0].message.content });
   } catch (error) {
-    console.error('Error calling OpenAI API:', error);
+    console.error('Error calling AI API:', error);
     res.status(500).json({ error: '调用 AI 服务时出错' });
   }
 });
