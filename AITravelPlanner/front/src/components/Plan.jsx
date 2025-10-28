@@ -12,21 +12,167 @@ const Plan = () => {
   const mediaRecorderRef = useRef(null);
   const recognitionRef = useRef(null);
   const [startDate, setStartDate] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [genStatus, setGenStatus] = useState('');
+  const INPUTS_KEY = 'atp_inputs';
+  const NLP_KEY = 'atp_nlp_text';
+
+  const persistInputs = () => {
+    try {
+      const inputs = {
+        dest: document.getElementById('dest')?.value || '',
+        date: startDate || document.getElementById('date')?.value || '',
+        days: Number(document.getElementById('days')?.value || 0),
+        budget: Number(document.getElementById('budget')?.value || 0),
+        people: Number(document.getElementById('people')?.value || 0),
+        prefs: document.getElementById('prefs')?.value || '',
+      };
+      window.__planInputs = inputs;
+      if (typeof localStorage !== 'undefined') localStorage.setItem(INPUTS_KEY, JSON.stringify(inputs));
+    } catch (_) {}
+  };
+
+  const clearBudgetExpenses = () => {
+    try {
+      const bgt = Number((window.__budget?.budgetTotal) ?? ((typeof localStorage !== 'undefined' && localStorage.getItem('atp_budget_total')) || 0));
+      window.__budget = { budgetTotal: bgt || 0, expenses: [] };
+      if (typeof localStorage !== 'undefined') localStorage.setItem('atp_expenses', JSON.stringify([]));
+      window.dispatchEvent(new CustomEvent('atp:expensesReset'));
+    } catch (_) {}
+  };
+
+  // 恢复最近一次生成的行程（跨标签切换后仍在）
+  useEffect(() => {
+    try {
+      const cached = (typeof window !== 'undefined' && window.__planMarkdown) ||
+        (typeof localStorage !== 'undefined' && localStorage.getItem('atp_plan_md')) || '';
+      if (cached && (!plan || !String(plan).trim())) {
+        setPlan(cached);
+      }
+    } catch (_) {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 当行程更新时，持久化到共享存储与 localStorage，避免切换标签后丢失
+  useEffect(() => {
+    try {
+      if (plan && typeof plan === 'string' && plan.trim()) {
+        window.__planMarkdown = plan;
+        if (typeof localStorage !== 'undefined') localStorage.setItem('atp_plan_md', plan);
+      }
+    } catch (_) {}
+  }, [plan]);
+
+  // 初次挂载时恢复表单输入与预算联动
+  useEffect(() => {
+    try {
+      const raw = (typeof localStorage !== 'undefined' && localStorage.getItem(INPUTS_KEY));
+      const cached = raw ? JSON.parse(raw) : (typeof window !== 'undefined' && window.__planInputs) || null;
+      if (cached && typeof cached === 'object') {
+        const destEl = document.getElementById('dest');
+        const dateEl = document.getElementById('date');
+        const daysEl = document.getElementById('days');
+        const budgetEl = document.getElementById('budget');
+        const peopleEl = document.getElementById('people');
+        const prefsEl = document.getElementById('prefs');
+        if (destEl) destEl.value = cached.dest || '';
+        setStartDate(cached.date || '');
+        if (daysEl) daysEl.value = (typeof cached.days === 'number' && cached.days > 0) ? String(cached.days) : '';
+        if (budgetEl) {
+          const b = Number(cached.budget || 0);
+          budgetEl.value = b ? String(b) : '';
+          try {
+            window.__budget = { ...(window.__budget || {}), budgetTotal: b, expenses: (window.__budget?.expenses || []) };
+            if (typeof localStorage !== 'undefined') localStorage.setItem('atp_budget_total', String(b));
+            window.dispatchEvent(new CustomEvent('atp:budgetUpdated', { detail: b }));
+          } catch (_) {}
+        }
+        if (peopleEl) peopleEl.value = (typeof cached.people === 'number' && cached.people > 0) ? String(cached.people) : '';
+        if (prefsEl) prefsEl.value = cached.prefs || '';
+        window.__planInputs = cached;
+      }
+    } catch (_) {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 恢复并持久化自然语言需求
+  useEffect(() => {
+    try {
+      const cached = (typeof window !== 'undefined' && window.__nlpText) || (typeof localStorage !== 'undefined' && localStorage.getItem(NLP_KEY)) || '';
+      if (cached && !recognizedText) setRecognizedText(cached);
+    } catch (_) {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.__nlpText = recognizedText || '';
+      if (typeof localStorage !== 'undefined') localStorage.setItem(NLP_KEY, String(recognizedText || ''));
+    } catch (_) {}
+  }, [recognizedText]);
+
+  const parseNlpToFields = async () => {
+    const nlpText = recognizedText || document.getElementById('nlpText')?.value || '';
+    const trimmed = String(nlpText || '').trim();
+    if (!trimmed) {
+      alert('请先输入自然语言需求');
+      return;
+    }
+    try {
+      const { data } = await axios.post('/api/parse', { nlpText: trimmed });
+      const f = data?.fields || {};
+      if (typeof f !== 'object') throw new Error('解析结果无效');
+      const destEl = document.getElementById('dest');
+      const dateEl = document.getElementById('date');
+      const daysEl = document.getElementById('days');
+      const budgetEl = document.getElementById('budget');
+      const peopleEl = document.getElementById('people');
+      const prefsEl = document.getElementById('prefs');
+      if (destEl) destEl.value = f.dest || '';
+      if (dateEl) { setStartDate(f.date || ''); }
+      if (daysEl) daysEl.value = Number(f.days || 0) || '';
+      if (budgetEl) {
+        const parsedBudget = Number(f.budget || 0) || 0;
+        budgetEl.value = parsedBudget || '';
+        // 同步到共享存储并广播事件，确保预算面板可见
+        try {
+          window.__budget = { ...(window.__budget || {}), budgetTotal: parsedBudget, expenses: (window.__budget?.expenses || []) };
+          if (typeof localStorage !== 'undefined') localStorage.setItem('atp_budget_total', String(parsedBudget));
+          window.dispatchEvent(new CustomEvent('atp:budgetUpdated', { detail: parsedBudget }));
+        } catch (_) {}
+      }
+      if (peopleEl) peopleEl.value = Number(f.people || 0) || '';
+      if (prefsEl) prefsEl.value = f.prefs || '';
+      persistInputs();
+      alert('已从自然语言填充表单');
+    } catch (err) {
+      console.error('解析自然语言失败:', err?.response?.data || err.message);
+      alert('解析失败，请稍后重试');
+    }
+  };
 
   const generatePlan = async () => {
+    clearBudgetExpenses();
+    persistInputs();
     const destination = document.getElementById('dest').value;
     const duration = document.getElementById('days').value;
     const interests = document.getElementById('prefs').value;
 
     try {
-      const response = await axios.post('http://localhost:3000/api/plan', {
+      setIsGenerating(true);
+      setGenStatus('⏳ 正在生成行程...');
+      const response = await axios.post('/api/plan', {
         destination,
         duration,
         interests,
       });
       setPlan(response.data.plan);
+      setGenStatus('✅ 已生成');
     } catch (error) {
       console.error('Error generating plan:', error);
+      setGenStatus('❌ 生成失败，请稍后重试');
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -37,11 +183,18 @@ const Plan = () => {
       return;
     }
     try {
-      const response = await axios.post('http://localhost:3000/api/plan', { nlpText });
+      clearBudgetExpenses();
+      setIsGenerating(true);
+      setGenStatus('⏳ 正在生成行程...');
+      const response = await axios.post('/api/plan', { nlpText });
       setPlan(response.data.plan);
+      setGenStatus('✅ 已生成');
     } catch (error) {
       console.error('Error generating plan from text:', error);
       alert('生成失败，请稍后重试');
+      setGenStatus('❌ 生成失败，请稍后重试');
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -289,9 +442,9 @@ const Plan = () => {
         </div>
       </div>
       <div className="row" style={{ marginTop: '12px' }}>
-        <div style={{ flex: '1 1 180px' }}>
+      <div style={{ flex: '1 1 180px' }}>
           <label>目的地</label>
-          <input id="dest" placeholder="如：日本东京" />
+          <input id="dest" placeholder="如：日本东京" onInput={() => persistInputs()} />
         </div>
         <div style={{ flex: '1 1 160px' }}>
           <label>出发日期</label>
@@ -299,7 +452,7 @@ const Plan = () => {
             type="date"
             id="date"
             value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
+            onChange={(e) => { setStartDate(e.target.value); setTimeout(() => persistInputs(), 0); }}
             onFocus={(e) => e.target.showPicker && e.target.showPicker()}
             inputMode="numeric"
             placeholder="YYYY-MM-DD"
@@ -307,29 +460,47 @@ const Plan = () => {
         </div>
         <div style={{ flex: '1 1 140px' }}>
           <label>天数</label>
-          <input type="number" id="days" min="1" defaultValue="5" />
+          <input type="number" id="days" min="1" defaultValue="5" onInput={() => persistInputs()} />
         </div>
         <div style={{ flex: '1 1 160px' }}>
           <label>预算（¥）</label>
-          <input type="number" id="budget" min="0" step="100" placeholder="10000" />
+          <input
+            type="number"
+            id="budget"
+            min="0"
+            step="100"
+            placeholder="10000"
+            onInput={(e) => {
+              const val = Number(e.target.value || 0);
+              try {
+                window.__budget = { ...(window.__budget || {}), budgetTotal: val, expenses: (window.__budget?.expenses || []) };
+                if (typeof localStorage !== 'undefined') localStorage.setItem('atp_budget_total', String(val));
+                window.dispatchEvent(new CustomEvent('atp:budgetUpdated', { detail: val }));
+                persistInputs();
+              } catch (_) {}
+            }}
+          />
         </div>
         <div style={{ flex: '1 1 140px' }}>
           <label>同行人数</label>
-          <input type="number" id="people" min="1" defaultValue="2" />
+          <input type="number" id="people" min="1" defaultValue="2" onInput={() => persistInputs()} />
         </div>
       </div>
       <div className="row" style={{ marginTop: '12px' }}>
         <div style={{ flex: '1 1 100%' }}>
           <label>旅行偏好（以逗号分隔）</label>
-          <input id="prefs" placeholder="美食, 动漫, 亲子, 自然风光" />
+          <input id="prefs" placeholder="美食, 动漫, 亲子, 自然风光" onInput={() => persistInputs()} />
         </div>
       </div>
       <div className="row" style={{ marginTop: '12px' }}>
-        <button className="btn ghost" id="parseBtn">🔎 从自然语言中提取并填充</button>
-        <button className="btn" onClick={generatePlanFromText}>🧠 直接用自然语言生成</button>
-        <button className="btn primary" id="genBtn" onClick={generatePlan}>✨ 生成行程</button>
+        <button className="btn ghost" id="parseBtn" onClick={parseNlpToFields}>🔎 从自然语言中提取并填充</button>
+        <button className="btn" onClick={generatePlanFromText} disabled={isGenerating}>{isGenerating ? '🧠 正在生成...' : '🧠 直接用自然语言生成'}</button>
+        <button className="btn primary" id="genBtn" onClick={generatePlan} disabled={isGenerating}>{isGenerating ? '✨ 正在生成...' : '✨ 生成行程'}</button>
       </div>
       <div style={{ marginTop: '14px' }}>
+        {genStatus && (
+          <div className="hint" aria-live="polite">{genStatus}</div>
+        )}
         <div className="result" id="planResult">
           {plan ? (
             <ReactMarkdown>{plan}</ReactMarkdown>

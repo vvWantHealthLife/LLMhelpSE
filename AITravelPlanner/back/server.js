@@ -164,10 +164,187 @@ app.post('/api/plan', async (req, res) => {
   }
 });
 
-app.post('/api/budget', (req, res) => {
-  // TODO: 使用 LLM API 实现 AI 预算分析逻辑
-  const { expenses } = req.body;
-  res.json({ message: '预算更新成功！', data: { expenses } });
+// 解析自然语言为结构化字段
+app.post('/api/parse', async (req, res) => {
+  try {
+    const { text, nlpText } = req.body || {};
+    const content = String(nlpText || text || '').trim();
+    if (!content) return res.status(400).json({ error: '缺少自然语言文本' });
+
+    const extractPrompt = `请从以下中文自然语言旅行需求中，提取结构化字段并以严格 JSON 格式返回：
+文本："${content}"
+请返回一个 JSON 对象，包含这些键：
+- dest: 目的地（如城市/国家，若无法确定返回空字符串）
+- date: 出发日期（YYYY-MM-DD，若未提供返回空字符串）
+- days: 天数（整数，若未提供用合理估计或 0）
+- budget: 预算金额（整数人民币，若未提供则 0）
+- people: 同行人数（整数，若未提供则 0）
+- prefs: 偏好（以逗号分隔的关键词，如 "美食, 动漫"，若未提供则空字符串）
+只输出 JSON，不要任何其它文字。`;
+
+    let parsed = null;
+    // 优先使用百炼（OpenAI 兼容模式）
+    if (bailianApiKey) {
+      const axios = require('axios');
+      try {
+        const resp = await axios.post(
+          'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+          {
+            model: process.env.BAILIAN_MODEL || 'qwen-turbo',
+            messages: [{ role: 'user', content: extractPrompt }],
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${bailianApiKey}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 20000,
+          }
+        );
+        const txt = resp.data?.choices?.[0]?.message?.content || '';
+        try { parsed = JSON.parse(txt); } catch (e) { /* 继续回退 */ }
+      } catch (err) {
+        console.warn('百炼解析失败，回退到 OpenAI:', err?.response?.data || err.message);
+      }
+    }
+
+    if (!parsed) {
+      try {
+        const completion = await openai.chat.completions.create({
+          messages: [{ role: 'user', content: extractPrompt }],
+          model: process.env.OPENAI_MODEL || 'gpt-3.5-turbo',
+        });
+        const txt = completion.choices?.[0]?.message?.content || '';
+        try { parsed = JSON.parse(txt); } catch (e) { /* 继续回退 */ }
+      } catch (err2) {
+        console.warn('OpenAI 解析失败，回退到本地启发式:', err2?.message);
+      }
+    }
+
+    // 本地启发式解析兜底
+    if (!parsed || typeof parsed !== 'object') {
+      const out = { dest: '', date: '', days: 0, budget: 0, people: 0, prefs: '' };
+      try {
+        // 目的地：匹配“去X”、“到X”、“去X玩”等
+        const mDest = content.match(/去([\u4e00-\u9fa5A-Za-z\s·]+?)(?:玩|旅游|旅行|\s|，|。)/) || content.match(/到([\u4e00-\u9fa5A-Za-z\s·]+?)(?:去|玩|旅游|旅行|\s|，|。)/);
+        if (mDest && mDest[1]) out.dest = mDest[1].trim();
+
+        // 日期：识别 YYYY-MM-DD 或 YYYY年M月D日
+        const mDate1 = content.match(/(\d{4}-\d{1,2}-\d{1,2})/);
+        const mDate2 = content.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+        if (mDate1) out.date = mDate1[1];
+        else if (mDate2) {
+          const yyyy = mDate2[1]; const mm = String(mDate2[2]).padStart(2, '0'); const dd = String(mDate2[3]).padStart(2, '0');
+          out.date = `${yyyy}-${mm}-${dd}`;
+        }
+
+        // 天数：匹配“5天”或“5 日”
+        const mDays = content.match(/(\d{1,2})\s*(?:天|日)/);
+        if (mDays) out.days = Number(mDays[1]);
+
+        // 预算：匹配“预算1万元”、“预算 10000 元”、“1万”
+        let budget = 0;
+        const mBudgetYuan = content.match(/预算?\s*(\d{3,7})\s*元/);
+        const mBudgetWan = content.match(/预算?\s*(\d{1,3})\s*万/);
+        if (mBudgetYuan) budget = Number(mBudgetYuan[1]);
+        else if (mBudgetWan) budget = Number(mBudgetWan[1]) * 10000;
+        else {
+          const mLooseWan = content.match(/(\d{1,3})\s*万/);
+          const mLooseYuan = content.match(/(\d{3,7})\s*元/);
+          if (mLooseWan) budget = Number(mLooseWan[1]) * 10000;
+          else if (mLooseYuan) budget = Number(mLooseYuan[1]);
+        }
+        out.budget = budget || 0;
+
+        // 人数：匹配“带孩子”、“一家三口”、“2人”
+        const mPeopleNum = content.match(/(\d{1,2})\s*人/) || content.match(/一家(\d)口/);
+        if (mPeopleNum) out.people = Number(mPeopleNum[1]);
+        else if (/带孩子/.test(content)) out.people = 3; // 简单估计：带孩子 -> 3 人
+
+        // 偏好：匹配常见关键词
+        const prefs = [];
+        const prefDict = ['美食','动漫','亲子','自然风光','历史','文化','购物','滑雪','露营','博物馆','艺术'];
+        for (const k of prefDict) { if (content.includes(k)) prefs.push(k); }
+        out.prefs = prefs.join(', ');
+        parsed = out;
+      } catch (_) {
+        parsed = { dest: '', date: '', days: 0, budget: 0, people: 0, prefs: '' };
+      }
+    }
+
+    return res.json({ ok: true, fields: parsed });
+  } catch (error) {
+    console.error('解析自然语言失败:', error);
+    res.status(500).json({ error: '解析自然语言失败' });
+  }
+});
+
+// 预算分析与建议
+app.post('/api/budget', async (req, res) => {
+  try {
+    const { expenses, budgetTotal = 0, currency = 'CNY' } = req.body || {};
+    const list = Array.isArray(expenses) ? expenses.filter(e => e && typeof e.amt === 'number') : [];
+    const spent = list.reduce((sum, e) => sum + (Number(e.amt) || 0), 0);
+    const remain = Math.max(0, Number(budgetTotal || 0) - spent);
+    const percent = budgetTotal ? Math.round((spent / budgetTotal) * 100) : 0;
+    const byCat = {};
+    for (const e of list) {
+      const cat = String(e.cat || '其他');
+      byCat[cat] = (byCat[cat] || 0) + (Number(e.amt) || 0);
+    }
+
+    let advice = '';
+    const baseSummary = { currency, budgetTotal: Number(budgetTotal || 0), spent, remain, percent, byCat };
+
+    // 优先调用 LLM 生成建议
+    const suggestPrompt = `请基于以下旅行支出明细，给出简洁的预算建议（中文，最多 120 字）：\n预算上限: ${budgetTotal} ${currency}\n已花费: ${spent} ${currency}\n剩余: ${remain} ${currency}\n分类合计: ${JSON.stringify(byCat)}\n支出明细: ${JSON.stringify(list)}\n请重点指出是否超支风险、哪些分类偏高，以及可优化的建议。`;
+    if (bailianApiKey) {
+      const axios = require('axios');
+      try {
+        const resp = await axios.post(
+          'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+          {
+            model: process.env.BAILIAN_MODEL || 'qwen-turbo',
+            messages: [{ role: 'user', content: suggestPrompt }],
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${bailianApiKey}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 20000,
+          }
+        );
+        advice = resp.data?.choices?.[0]?.message?.content || '';
+      } catch (e) {
+        console.warn('百炼预算建议失败，回退到 OpenAI:', e?.response?.data || e.message);
+      }
+    }
+    if (!advice) {
+      try {
+        const completion = await openai.chat.completions.create({
+          messages: [{ role: 'user', content: suggestPrompt }],
+          model: process.env.OPENAI_MODEL || 'gpt-3.5-turbo',
+        });
+        advice = completion.choices?.[0]?.message?.content || '';
+      } catch (e2) {
+        console.warn('OpenAI 预算建议失败，使用本地建议:', e2?.message);
+      }
+    }
+
+    if (!advice) {
+      // 本地建议兜底
+      const hotCat = Object.entries(byCat).sort((a,b)=>b[1]-a[1])[0]?.[0];
+      advice = percent >= 80
+        ? `支出已达预算的 ${percent}%，建议控制开销${hotCat?`（${hotCat}偏高）`:''}，优先选择性价比更高的餐饮与交通。`
+        : `当前支出占预算 ${percent}%${hotCat?`，${hotCat}较高`:''}。建议设置每日限额并记录开销，保持余量以应对突发费用。`;
+    }
+
+    res.json({ ok: true, summary: baseSummary, advice });
+  } catch (error) {
+    console.error('预算分析失败:', error);
+    res.status(500).json({ error: '预算分析失败' });
+  }
 });
 
 // 科大讯飞语音识别API端点
@@ -604,6 +781,7 @@ const PlanSchema = new mongoose.Schema({
   },
   expenses: [{ name: String, amt: Number, cat: String }],
   planMarkdown: String,
+  nlpText: String,
 }, { timestamps: true });
 
 const Plan = mongoose.model('Plan', PlanSchema);
@@ -612,8 +790,8 @@ const Plan = mongoose.model('Plan', PlanSchema);
 // 创建计划
 app.post('/api/plans', authenticate, async (req, res) => {
   try {
-    const { inputs, expenses, planMarkdown } = req.body;
-    const plan = await Plan.create({ userId: req.userId, inputs, expenses: expenses || [], planMarkdown });
+    const { inputs, expenses, planMarkdown, nlpText } = req.body;
+    const plan = await Plan.create({ userId: req.userId, inputs, expenses: expenses || [], planMarkdown, nlpText });
     res.status(201).json({ plan });
   } catch (error) {
     console.error('创建计划失败:', error);

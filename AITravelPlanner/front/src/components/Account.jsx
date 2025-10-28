@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import ReactMarkdown from 'react-markdown';
 
 const Account = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -7,6 +8,8 @@ const Account = () => {
   const [plans, setPlans] = useState([]);
   const [profile, setProfile] = useState(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
+  const [loadingPlans, setLoadingPlans] = useState(false);
+  const [expandedIds, setExpandedIds] = useState({});
 
   // 初始化：从 localStorage 读取令牌并设置 axios 默认头
   useEffect(() => {
@@ -49,20 +52,44 @@ const Account = () => {
   // 保存当前行程到云端
   const saveCurrentPlanToCloud = async () => {
     if (!token) return alert('请先登录');
-    const inputs = {
-      dest: document.getElementById('dest')?.value || '',
-      date: document.getElementById('date')?.value || '',
-      days: Number(document.getElementById('days')?.value || 0),
-      budget: Number(document.getElementById('budget')?.value || 0),
-      people: Number(document.getElementById('people')?.value || 0),
-      prefs: document.getElementById('prefs')?.value || '',
-    };
-    const planMarkdown = document.querySelector('#planResult')?.textContent || '';
-    const expenses = []; // 目前前端预算未接入状态管理，先空数组占位
+    // 优先读取持久化的表单与自然语言，避免跨标签或刷新后丢失
+    let inputs = null;
+    try {
+      const raw = (typeof localStorage !== 'undefined' && localStorage.getItem('atp_inputs')) || '';
+      inputs = raw ? JSON.parse(raw) : null;
+    } catch (_) {}
+    if (!inputs || typeof inputs !== 'object') {
+      inputs = {
+        dest: document.getElementById('dest')?.value || '',
+        date: document.getElementById('date')?.value || '',
+        days: Number(document.getElementById('days')?.value || 0),
+        budget: Number(document.getElementById('budget')?.value || 0),
+        people: Number(document.getElementById('people')?.value || 0),
+        prefs: document.getElementById('prefs')?.value || '',
+      };
+    }
+    // 优先从共享存储/本地存储读取行程内容，避免切换标签导致保存为空
+    const planMarkdown =
+      (typeof window !== 'undefined' && window.__planMarkdown) ||
+      (typeof localStorage !== 'undefined' && localStorage.getItem('atp_plan_md')) ||
+      (document.querySelector('#planResult')?.textContent || '');
+    const nlpText =
+      (typeof window !== 'undefined' && window.__nlpText) ||
+      (typeof localStorage !== 'undefined' && localStorage.getItem('atp_nlp_text')) || '';
+    let expenses = (window.__budget && Array.isArray(window.__budget.expenses)) ? window.__budget.expenses : [];
+    if (!Array.isArray(expenses) || expenses.length === 0) {
+      try {
+        const raw = (typeof localStorage !== 'undefined' && localStorage.getItem('atp_expenses')) || '[]';
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) expenses = list;
+      } catch (_) {}
+    }
 
     try {
-      await axios.post('/api/plans', { inputs, expenses, planMarkdown });
+      await axios.post('/api/plans', { inputs, expenses, planMarkdown, nlpText });
       alert('已保存到云端');
+      // 保存成功后刷新列表，确保用户能立即看到保存的内容
+      await loadMyPlansFromCloud();
     } catch (error) {
       console.error('保存计划失败:', error);
       alert('保存失败，请稍后重试');
@@ -73,11 +100,14 @@ const Account = () => {
   const loadMyPlansFromCloud = async () => {
     if (!token) return alert('请先登录');
     try {
+      setLoadingPlans(true);
       const { data } = await axios.get('/api/plans');
       setPlans(data.plans || []);
     } catch (error) {
       console.error('载入计划失败:', error);
       alert('载入失败，请稍后重试');
+    } finally {
+      setLoadingPlans(false);
     }
   };
 
@@ -90,6 +120,17 @@ const Account = () => {
       console.error('删除计划失败:', error);
       alert('删除失败，请稍后重试');
     }
+  };
+
+  // 登录后自动载入已保存的计划，确保前端能看到之前的内容
+  useEffect(() => {
+    if (isLoggedIn && token) {
+      loadMyPlansFromCloud();
+    }
+  }, [isLoggedIn, token]);
+
+  const toggleExpand = (id) => {
+    setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
   return (
@@ -151,18 +192,50 @@ const Account = () => {
       </div>
 
       <div className="list" id="plansList" style={{ marginTop: '10px' }}>
-        {plans.length === 0 ? (
+        {loadingPlans && <div className="hint">正在载入已保存的内容...</div>}
+        {plans.length === 0 && !loadingPlans && (
           <div className="hint">暂无保存的计划。</div>
-        ) : (
+        )}
+        {plans.length > 0 && (
           plans.map((p) => (
-            <div key={p._id} className="item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <strong>计划</strong>
-                <div className="hint">{p.inputs?.dest || '未定'} · {p.inputs?.days || '-'} 天 · 预算 ¥{p.inputs?.budget || 0}</div>
+            <div key={p._id} className="item" style={{ display: 'grid', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <strong>去 {(p.inputs?.dest && String(p.inputs.dest).trim()) || '未知地点'} 的计划</strong>
+                  <div className="hint">
+                    天数 {(typeof p.inputs?.days === 'number' && p.inputs.days > 0) ? p.inputs.days : '-'} 天 · 预算 ¥{Number(p.inputs?.budget || 0)}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn" onClick={() => toggleExpand(p._id)}>{expandedIds[p._id] ? '🔽 收起' : '🔍 查看'}</button>
+                  <button className="btn" onClick={() => deletePlan(p._id)}>🗑️ 删除</button>
+                </div>
               </div>
-              <div>
-                <button className="btn" onClick={() => deletePlan(p._id)}>🗑️ 删除</button>
-              </div>
+              {expandedIds[p._id] && (
+                <div className="card" style={{ background: 'rgba(18,23,51,0.5)', padding: 10 }}>
+                  {p.nlpText && (
+                    <div style={{ marginBottom: 8 }}>
+                      <div className="hint">自然语言需求</div>
+                      <div style={{ whiteSpace: 'pre-wrap' }}>{p.nlpText}</div>
+                    </div>
+                  )}
+                  {p.planMarkdown ? (
+                    <ReactMarkdown>{p.planMarkdown}</ReactMarkdown>
+                  ) : (
+                    <div className="hint">该计划没有保存具体行程内容。</div>
+                  )}
+                  {Array.isArray(p.expenses) && p.expenses.length > 0 && (
+                    <div style={{ marginTop: 8 }}>
+                      <div className="hint">已保存的预算项（{p.expenses.length}）</div>
+                      <ul style={{ margin: 0, paddingLeft: 18 }}>
+                        {p.expenses.map((e, idx) => (
+                          <li key={idx}>{e.name || '未命名'} · ¥{Number((e.amt ?? e.cost ?? 0))}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ))
         )}
