@@ -1,5 +1,7 @@
 # AITravelPlanner
 
+我的所有APIkey均存放在github中后端相关的.env文件中
+
 一个端到端的 AI 旅行规划演示项目，包含自然语言解析、智能行程生成、预算记录与分析、地图路线、用户注册登录与计划云端存储。前端使用 React + Vite，后端使用 Node.js + Express + MongoDB，并集成 OpenAI 与阿里云百炼（DashScope）两套 LLM 以及科大讯飞语音识别与高德地图。
 
 ## 功能亮点
@@ -222,3 +224,57 @@ export const AMAP_SECURITY_CODE = 'your_amap_security_code';
 
 ---
 如需进一步扩展（地图展示、计划分享、多人协作、费用报表等），欢迎在现有结构上追加模块与路由。祝开发顺利！
+
+## Docker 镜像与发布
+- 镜像构建与推送
+  - 仓库已添加前后端 `Dockerfile`（`back/Dockerfile`、`front/Dockerfile`）和 CI 工作流（`.github/workflows/docker.yml`）。
+  - 在 GitHub 仓库设置 Secrets：
+    - `ACR_SERVER`：如 `registry.cn-hangzhou.aliyuncs.com`
+    - `ACR_NAMESPACE`：你的命名空间，如 `your_namespace`
+    - `ACR_USERNAME`：阿里云容器镜像服务登录用户名（或子账号 AK）
+    - `ACR_PASSWORD`：登录密码（或子账号 SK）
+  - 推送到 `main` 分支或手动触发后，Actions 会分别构建并推送：
+    - 后端：`${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-backend:latest` 与 `:${GITHUB_SHA}`
+    - 前端：`${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-frontend:latest` 与 `:${GITHUB_SHA}`
+
+- 直接拉取与运行（单容器）
+  - 后端（需要 `.env` 或传入环境变量）：
+    - `docker pull ${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-backend:latest`
+    - `docker run --rm -p 3000:3000 --env-file back/.env ${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-backend:latest`
+  - 前端（静态站点，Nginx 提供）：
+    - `docker pull ${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-frontend:latest`
+    - `docker run --rm -p 8080:80 ${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-frontend:latest`
+  - 访问：前端 `http://localhost:8080/`；后端 `http://localhost:3000/`
+
+- 一键本地运行（Compose）
+  - 在项目根创建 `.env.docker`（示例）：
+    ```
+    REGISTRY=registry.cn-hangzhou.aliyuncs.com
+    NAMESPACE=your_namespace
+    TAG=latest
+    # 后端环境变量（可复用 back/.env 的内容）
+    DB_CONNECTION_STRING=mongodb://localhost:27017/ai_travel_planner
+    JWT_SECRET=replace_me
+    MAX_BODY_SIZE=15mb
+    LLM_API_KEY=your_openai_key
+    OPENAI_MODEL=gpt-3.5-turbo
+    BAILIAN_API_KEY=your_dashscope_key
+    BAILIAN_MODEL=qwen-turbo
+    MAP_API_KEY=your_amap_rest_key
+    SPEECH_API_KEY=your_xfyun_api_key
+    SPEECH_API_APPID=your_xfyun_appid
+    SPEECH_API_SECRET=your_xfyun_secret
+    ```
+  - 启动：`docker compose --env-file .env.docker up -d`
+  - 访问：前端 `http://localhost:8080/`；后端 `http://localhost:3000/`
+
+- 离线镜像（tar 文件，可下载分发）
+  - 导出：
+    - `docker save -o ai-travel-planner-backend.tar ${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-backend:latest`
+    - `docker save -o ai-travel-planner-frontend.tar ${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-frontend:latest`
+  - 导入：
+    - `docker load -i ai-travel-planner-backend.tar`
+    - `docker load -i ai-travel-planner-frontend.tar`
+
+- 重要说明
+  - 前端部分接口使用相对路径 `/api`，也有少量硬编码 `http://localhost:3000`（地图与语音等）。使用 Compose 在本机运行时保持端口映射为 `3000`/`8080` 即可正常访问；远程部署建议统一为相对路径并用反向代理处理 `/api`，或在构建前设置统一的 `axios` 基础地址。

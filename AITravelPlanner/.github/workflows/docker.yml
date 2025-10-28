@@ -1,0 +1,57 @@
+name: Docker Build & Push (Aliyun ACR)
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ${{ secrets.ACR_SERVER }}
+  NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Aliyun ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build & Push Backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./AITravelPlanner/back
+          file: ./AITravelPlanner/back/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/ai-travel-planner-backend:latest
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/ai-travel-planner-backend:${{ github.sha }}
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Aliyun ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build & Push Frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./AITravelPlanner/front
+          file: ./AITravelPlanner/front/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/ai-travel-planner-frontend:latest
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/ai-travel-planner-frontend:${{ github.sha }}

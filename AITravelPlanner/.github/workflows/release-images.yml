@@ -1,0 +1,83 @@
+name: Release Docker Images
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    env:
+      ACR_SERVER: ${{ secrets.ACR_SERVER }}
+      ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+      ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+      ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to Aliyun ACR
+        run: echo "${{ env.ACR_PASSWORD }}" | docker login "${{ env.ACR_SERVER }}" -u "${{ env.ACR_USERNAME }}" --password-stdin
+
+      - name: Compute tag
+        id: vars
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" && -n "${{ github.ref_name }}" ]]; then
+            TAG="${{ github.ref_name }}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="v${GITHUB_SHA}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build backend image
+        run: |
+          docker build -t "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-backend:${{ steps.vars.outputs.tag }}" -f back/Dockerfile back
+
+      - name: Build frontend image
+        run: |
+          docker build -t "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-frontend:${{ steps.vars.outputs.tag }}" -f front/Dockerfile front
+
+      - name: Push images to ACR
+        run: |
+          docker push "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-backend:${{ steps.vars.outputs.tag }}"
+          docker push "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-frontend:${{ steps.vars.outputs.tag }}"
+
+      - name: Save images to tar and bundle artifacts
+        run: |
+          mkdir -p dist
+          docker save -o "dist/ai-travel-planner-backend-${{ steps.vars.outputs.tag }}.tar" "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-backend:${{ steps.vars.outputs.tag }}"
+          docker save -o "dist/ai-travel-planner-frontend-${{ steps.vars.outputs.tag }}.tar" "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-frontend:${{ steps.vars.outputs.tag }}"
+          cp docker-compose.yml dist/
+          cp README.md dist/
+          cp .env.docker.example dist/.env.docker
+
+      - name: Upload CI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-images-${{ steps.vars.outputs.tag }}
+          path: dist
+
+      - name: Create GitHub Release with assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/ai-travel-planner-backend-${{ steps.vars.outputs.tag }}.tar
+            dist/ai-travel-planner-frontend-${{ steps.vars.outputs.tag }}.tar
+            dist/docker-compose.yml
+            dist/.env.docker
+            dist/README.md
+          body: |
+            Pre-built Docker images and compose bundle for AITravelPlanner.
+            Offline usage: load tar and run with compose/env file.
+            Registry: ${{ env.ACR_SERVER }}/${{ env.ACR_NAMESPACE }}/ai-travel-planner-*
