@@ -276,5 +276,19 @@ export const AMAP_SECURITY_CODE = 'your_amap_security_code';
     - `docker load -i ai-travel-planner-backend.tar`
     - `docker load -i ai-travel-planner-frontend.tar`
 
+  - GitHub Release 离线包使用（推荐给老师验收）：
+    - 从 Release 下载资产：`ai-travel-planner-backend-<TAG>.tar`、`ai-travel-planner-frontend-<TAG>.tar`、`docker-compose.offline.yml`、`.env.docker`
+    - 加载镜像：
+      - `docker load -i ai-travel-planner-backend-<TAG>.tar`
+      - `docker load -i ai-travel-planner-frontend-<TAG>.tar`
+    - 启动服务：
+      - 按需编辑 `.env.docker`（填入需要的 Key，可留空以走本地兜底）
+      - `docker compose -f docker-compose.offline.yml --env-file .env.docker up -d`
+    - 访问：前端 `http://localhost:8080/`，后端 `http://localhost:3000/`
+    - 验证命令：
+      - `curl http://localhost:3000/api/map/config` 应返回 `{"enabled":true,...}`
+      - `curl -X POST http://localhost:3000/api/parse -H 'Content-Type: application/json' -d '{"text":"去日本京都玩三天，美食动漫预算一万"}'`
+      - `curl -X POST http://localhost:3000/api/plan -H 'Content-Type: application/json' -d '{"dest":"京都","days":3,"budget":10000,"people":1,"prefs":"美食,动漫"}'`
+
 - 重要说明
   - 前端部分接口使用相对路径 `/api`，也有少量硬编码 `http://localhost:3000`（地图与语音等）。使用 Compose 在本机运行时保持端口映射为 `3000`/`8080` 即可正常访问；远程部署建议统一为相对路径并用反向代理处理 `/api`，或在构建前设置统一的 `axios` 基础地址。

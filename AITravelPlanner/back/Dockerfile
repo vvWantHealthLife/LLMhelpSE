@@ -1,5 +1,6 @@
-# syntax=docker/dockerfile:1
-FROM node:18-alpine
+# Use ARG to allow switching base image (defaults to official Docker Hub)
+ARG BASE_NODE_IMAGE=node:18-alpine
+FROM ${BASE_NODE_IMAGE}
 
 WORKDIR /app
 ENV NODE_ENV=production
@@ -14,4 +15,5 @@ COPY scripts ./scripts
 
 # Expose port and start server
 EXPOSE 3000
-CMD ["node", "server.js"]
+ENTRYPOINT ["node"]
+CMD ["server.js"]

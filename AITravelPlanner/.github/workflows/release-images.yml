@@ -23,7 +23,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Log in to Aliyun ACR
+      - name: Maybe log in to Aliyun ACR
+        if: env.ACR_SERVER != '' && env.ACR_NAMESPACE != '' && env.ACR_USERNAME != '' && env.ACR_PASSWORD != ''
         run: echo "${{ env.ACR_PASSWORD }}" | docker login "${{ env.ACR_SERVER }}" -u "${{ env.ACR_USERNAME }}" --password-stdin
 
       - name: Compute tag
@@ -39,27 +40,31 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Build backend image
+      - name: Build backend image (local tag)
         run: |
-          docker build -t "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-backend:${{ steps.vars.outputs.tag }}" -f back/Dockerfile back
+          docker build --build-arg BASE_NODE_IMAGE=node:18-alpine -t "ai-travel-planner-backend:${{ steps.vars.outputs.tag }}" -f AITravelPlanner/back/Dockerfile AITravelPlanner/back
 
-      - name: Build frontend image
+      - name: Build frontend image (local tag)
         run: |
-          docker build -t "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-frontend:${{ steps.vars.outputs.tag }}" -f front/Dockerfile front
+          docker build --build-arg BASE_NODE_IMAGE=node:18-alpine --build-arg BASE_NGINX_IMAGE=nginx:alpine -t "ai-travel-planner-frontend:${{ steps.vars.outputs.tag }}" -f AITravelPlanner/front/Dockerfile AITravelPlanner/front
 
-      - name: Push images to ACR
+      - name: Tag and push images to ACR (optional)
+        if: env.ACR_SERVER != '' && env.ACR_NAMESPACE != '' && env.ACR_USERNAME != '' && env.ACR_PASSWORD != ''
         run: |
+          docker tag "ai-travel-planner-backend:${{ steps.vars.outputs.tag }}" "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-backend:${{ steps.vars.outputs.tag }}"
+          docker tag "ai-travel-planner-frontend:${{ steps.vars.outputs.tag }}" "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-frontend:${{ steps.vars.outputs.tag }}"
           docker push "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-backend:${{ steps.vars.outputs.tag }}"
           docker push "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-frontend:${{ steps.vars.outputs.tag }}"
 
       - name: Save images to tar and bundle artifacts
         run: |
           mkdir -p dist
-          docker save -o "dist/ai-travel-planner-backend-${{ steps.vars.outputs.tag }}.tar" "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-backend:${{ steps.vars.outputs.tag }}"
-          docker save -o "dist/ai-travel-planner-frontend-${{ steps.vars.outputs.tag }}.tar" "${ACR_SERVER}/${ACR_NAMESPACE}/ai-travel-planner-frontend:${{ steps.vars.outputs.tag }}"
-          cp docker-compose.yml dist/
-          cp README.md dist/
-          cp .env.docker.example dist/.env.docker
+          docker save -o "dist/ai-travel-planner-backend-${{ steps.vars.outputs.tag }}.tar" "ai-travel-planner-backend:${{ steps.vars.outputs.tag }}"
+          docker save -o "dist/ai-travel-planner-frontend-${{ steps.vars.outputs.tag }}.tar" "ai-travel-planner-frontend:${{ steps.vars.outputs.tag }}"
+          cp AITravelPlanner/docker-compose.yml dist/
+          cp AITravelPlanner/docker-compose.offline.yml dist/
+          cp AITravelPlanner/README.md dist/
+          cp AITravelPlanner/.env.docker.example dist/.env.docker
 
       - name: Upload CI artifacts
         uses: actions/upload-artifact@v4
@@ -75,9 +80,10 @@ jobs:
             dist/ai-travel-planner-backend-${{ steps.vars.outputs.tag }}.tar
             dist/ai-travel-planner-frontend-${{ steps.vars.outputs.tag }}.tar
             dist/docker-compose.yml
+            dist/docker-compose.offline.yml
             dist/.env.docker
             dist/README.md
           body: |
             Pre-built Docker images and compose bundle for AITravelPlanner.
             Offline usage: load tar and run with compose/env file.
-            Registry: ${{ env.ACR_SERVER }}/${{ env.ACR_NAMESPACE }}/ai-travel-planner-*
+            Registry (optional): ${{ env.ACR_SERVER }}/${{ env.ACR_NAMESPACE }}/ai-travel-planner-*

@@ -1,0 +1,30 @@
+version: "3.8"
+services:
+  backend:
+    image: ai-travel-planner-backend:latest
+    container_name: ai-travel-planner-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - MAX_BODY_SIZE=${MAX_BODY_SIZE:-15mb}
+      - DB_CONNECTION_STRING=${DB_CONNECTION_STRING}
+      - JWT_SECRET=${JWT_SECRET}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-3.5-turbo}
+      - BAILIAN_API_KEY=${BAILIAN_API_KEY}
+      - BAILIAN_MODEL=${BAILIAN_MODEL:-qwen-turbo}
+      - MAP_API_KEY=${MAP_API_KEY}
+      - SPEECH_API_KEY=${SPEECH_API_KEY}
+      - SPEECH_API_APPID=${SPEECH_API_APPID}
+      - SPEECH_API_SECRET=${SPEECH_API_SECRET}
+
+  frontend:
+    image: ai-travel-planner-frontend:latest
+    container_name: ai-travel-planner-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
